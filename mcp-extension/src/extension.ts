@@ -24,6 +24,7 @@ import {
   MCP_PROVIDER_ID,
 } from "./mcpProvider.js";
 import { ToolDispatcher } from "./tools/toolDispatcher.js";
+import { notAttachedError } from "./tools/errors.js";
 
 const DEBUG_TYPE = "unity-debugger-pure";
 
@@ -139,6 +140,9 @@ export async function activateWithDependencies(
     } catch (error) {
       failure = error;
     }
+    for (const runtime of runtimeBySessionRef.values()) {
+      runtime.events.invalidate(notAttachedError());
+    }
     try {
       await closeBridge();
     } catch (error) {
@@ -213,6 +217,7 @@ export async function activateWithDependencies(
     sessions.remove(existingSession);
     const runtime = runtimeBySessionId.get(session.id);
     if (runtime !== undefined && runtime.session === existingSession) {
+      runtime.events.invalidate(notAttachedError());
       runtimeBySessionId.delete(session.id);
       runtimeBySessionRef.delete(runtime.sessionRef);
     }
@@ -223,6 +228,9 @@ export async function activateWithDependencies(
   const createTracker = (
     session: vscode.DebugSession,
   ): vscode.DebugAdapterTracker | undefined => {
+    if (!isUnitySession(session)) {
+      return undefined;
+    }
     let selection: ReturnType<SessionRegistry["register"]>;
     try {
       removeReplacedSession(session);
@@ -236,6 +244,7 @@ export async function activateWithDependencies(
     let runtime = runtimeBySessionId.get(session.id);
     if (runtime === undefined || runtime.session !== session) {
       if (runtime !== undefined) {
+        runtime.events.invalidate(notAttachedError());
         references.invalidate(runtime.sessionRef);
         runtimeBySessionRef.delete(runtime.sessionRef);
       }
@@ -262,6 +271,9 @@ export async function activateWithDependencies(
 
   const terminateSession = (session: vscode.DebugSession): void => {
     try {
+      if (!isUnitySession(session)) {
+        return;
+      }
       const runtime = runtimeBySessionId.get(session.id);
       if (runtime !== undefined && runtime.session !== session) {
         return;
@@ -279,15 +291,30 @@ export async function activateWithDependencies(
           });
         }
       }
-      if (!sessions.remove(session)) {
-        return;
-      }
-      if (runtime !== undefined) {
-        runtimeBySessionId.delete(session.id);
-        runtimeBySessionRef.delete(runtime.sessionRef);
-      }
-      references.invalidate(selection.sessionRef);
-      dispatcher.onSessionStateChanged(selection.sessionRef);
+      queueMicrotask(() => {
+        try {
+          const current = sessions.findBySessionId(session.id);
+          if (
+            current?.sessionRef !== selection.sessionRef ||
+            sessions.resolveDebugSession(current) !== session ||
+            !sessions.remove(session)
+          ) {
+            return;
+          }
+          if (
+            runtime !== undefined &&
+            runtimeBySessionId.get(session.id) === runtime
+          ) {
+            runtime.events.invalidate(notAttachedError());
+            runtimeBySessionId.delete(session.id);
+            runtimeBySessionRef.delete(runtime.sessionRef);
+          }
+          references.invalidate(selection.sessionRef);
+          dispatcher.onSessionStateChanged(selection.sessionRef);
+        } catch {
+          // A replacement session won the lifecycle race; keep its state.
+        }
+      });
     } catch {
       // VS Code lifecycle notifications must never escape into the host.
     }
@@ -297,6 +324,9 @@ export async function activateWithDependencies(
     lifecycleDisposables.push(onceDisposable(boundary.onDidStartDebugSession(
       (session) => {
         try {
+          if (!isUnitySession(session)) {
+            return;
+          }
           removeReplacedSession(session);
           sessions.register(session, false);
         } catch {
@@ -350,9 +380,9 @@ export async function activateWithDependencies(
       },
     });
     context.subscriptions.push(
-      ...lifecycleDisposables,
-      bridgeDisposable,
       providerDisposable,
+      bridgeDisposable,
+      ...[...lifecycleDisposables].reverse(),
     );
   } catch (error) {
     try {
@@ -466,4 +496,14 @@ function readVersion(context: vscode.ExtensionContext): string {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isUnitySession(session: vscode.DebugSession): boolean {
+  try {
+    return session.type === DEBUG_TYPE &&
+      typeof session.id === "string" &&
+      session.id.length > 0;
+  } catch {
+    return false;
+  }
 }

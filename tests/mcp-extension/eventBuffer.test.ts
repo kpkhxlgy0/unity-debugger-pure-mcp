@@ -5,6 +5,7 @@ import {
   NORMALIZED_EVENT_KINDS,
   type NormalizedEventRecord,
 } from "../../mcp-extension/src/debug/eventBuffer.js";
+import type { StructuredToolError } from "../../mcp-extension/src/tools/errors.js";
 import {
   EventSequencer,
   StateProjector,
@@ -392,6 +393,28 @@ describe("EventBuffer", () => {
     buffer.append({ kind: "output", output: "late" });
     await vi.advanceTimersByTimeAsync(60_000);
     expect(await activeError).toBe(second);
+  });
+
+  it("invalidates all pending and future waits with the lifecycle error and clears timers", async () => {
+    vi.useFakeTimers();
+    const buffer = new EventBuffer(new EventSequencer());
+    const lifecycleError = Object.freeze({
+      code: "NOT_ATTACHED",
+      message: "No matching Unity debugger session is attached.",
+      retryable: true,
+      currentState: "detached",
+      action: "Attach to a debugger target and retry the request.",
+    }) satisfies StructuredToolError;
+    const first = rejectionOf(buffer.waitFor(0, ["output"], 60_000));
+    const second = rejectionOf(buffer.waitFor(0, ["breakpoint"], 60_000));
+    expect(vi.getTimerCount()).toBe(2);
+
+    buffer.invalidate(lifecycleError);
+
+    expect(await first).toBe(lifecycleError);
+    expect(await second).toBe(lifecycleError);
+    await expect(buffer.waitFor(0, undefined, 60_000)).rejects.toBe(lifecycleError);
+    expect(vi.getTimerCount()).toBe(0);
   });
 
   it("returns frozen records from both immediate scans and waiter resolution", async () => {

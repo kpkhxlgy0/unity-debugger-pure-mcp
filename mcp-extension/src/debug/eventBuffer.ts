@@ -96,6 +96,7 @@ export class EventBuffer {
   readonly #cursor: EventSequenceCursor;
   readonly #events: NormalizedEventRecord[] = [];
   readonly #waiters = new Set<EventWaiter>();
+  #invalidatedError: StructuredToolError | undefined;
   #lastSequence: number;
 
   public constructor(cursor: EventSequenceCursor) {
@@ -199,6 +200,9 @@ export class EventBuffer {
       return Promise.reject(new TypeError("afterSequence must be a non-negative safe integer."));
     }
     const normalizedKinds = normalizeKinds(kinds);
+    if (this.#invalidatedError !== undefined) {
+      return Promise.reject(this.#invalidatedError);
+    }
     if (signal?.aborted === true) {
       return Promise.reject(CANCELLED_ERROR);
     }
@@ -232,6 +236,16 @@ export class EventBuffer {
         this.#resolve(waiter, raced);
       }
     });
+  }
+
+  public invalidate(error: StructuredToolError): void {
+    if (this.#invalidatedError !== undefined) {
+      return;
+    }
+    this.#invalidatedError = error;
+    for (const waiter of [...this.#waiters]) {
+      this.#reject(waiter, error);
+    }
   }
 
   #store(record: NormalizedEventRecord): NormalizedEventRecord {

@@ -341,6 +341,7 @@ describe("MCP companion extension composition", () => {
     }) as { event: { kind: string; sequence: number } };
     expect(terminated.event).toEqual(expect.objectContaining({ kind: "terminated", sequence: 8 }));
     setup.listeners.terminate?.(active as unknown as vscode.DebugSession);
+    await Promise.resolve();
     await expect(request(bridge, "unity_debug_status", {})).resolves.toEqual({
       session: null,
       state: "not-attached",
@@ -400,6 +401,14 @@ describe("MCP companion extension composition", () => {
     }) as { session: { sessionRef: string }; reused: boolean };
     expect(first.reused).toBe(true);
 
+    setup.listeners.start?.(
+      session("reused-raw-id", "other-debugger") as unknown as vscode.DebugSession,
+    );
+    const afterForeign = await request(bridge, "unity_debug_status", {}) as {
+      session: { sessionRef: string };
+    };
+    expect(afterForeign.session.sessionRef).toBe(first.session.sessionRef);
+
     setup.listeners.start?.(replacement as unknown as vscode.DebugSession);
     await expect(request(bridge, "unity_debug_status", {})).resolves.toEqual({
       session: null,
@@ -418,6 +427,95 @@ describe("MCP companion extension composition", () => {
     expect(second.session.sessionRef).not.toBe(first.session.sessionRef);
 
     await runtime.dispose();
+  });
+
+  it("rejects an old pending event wait immediately when an exact session is replaced", async () => {
+    vi.useFakeTimers();
+    const original = session("pending-replacement");
+    const replacement = session("pending-replacement");
+    const setup = harness({ activeSession: original });
+    const runtime = await activateWithDependencies(setup.context, setup.boundary);
+    const bridge = setup.bridge();
+    await setup.listeners.tracker!.createDebugAdapterTracker(
+      original as unknown as vscode.DebugSession,
+    );
+    await request(bridge, "unity_debug_list_targets", {});
+    await request(bridge, "unity_debug_attach", { targetId: "opaque-target" });
+    const pending = request(bridge, "unity_debug_wait_for_event", {
+      afterSequence: 0,
+      kinds: ["output"],
+      timeoutMs: 60_000,
+    });
+    const rejection = pending.catch((error: unknown) => error);
+    expect(vi.getTimerCount()).toBe(1);
+
+    setup.listeners.start?.(replacement as unknown as vscode.DebugSession);
+
+    expect(vi.getTimerCount()).toBe(0);
+    await expect(rejection).resolves.toMatchObject({ code: "NOT_ATTACHED" });
+    await runtime.dispose();
+  });
+
+  it("delivers a synthesized terminated event before exact session cleanup", async () => {
+    vi.useFakeTimers();
+    const active = session("synthetic-termination");
+    const setup = harness({ activeSession: active });
+    const runtime = await activateWithDependencies(setup.context, setup.boundary);
+    const bridge = setup.bridge();
+    await setup.listeners.tracker!.createDebugAdapterTracker(
+      active as unknown as vscode.DebugSession,
+    );
+    await request(bridge, "unity_debug_list_targets", {});
+    await request(bridge, "unity_debug_attach", { targetId: "opaque-target" });
+    const pending = request(bridge, "unity_debug_wait_for_event", {
+      afterSequence: 0,
+      kinds: ["terminated"],
+      timeoutMs: 1_000,
+    }) as Promise<{ event: { kind: string; sequence: number }; state: string }>;
+    const unmatched = request(bridge, "unity_debug_wait_for_event", {
+      afterSequence: 0,
+      kinds: ["output"],
+      timeoutMs: 60_000,
+    }).catch((error: unknown) => error);
+
+    setup.listeners.terminate?.(active as unknown as vscode.DebugSession);
+
+    await expect(pending).resolves.toMatchObject({
+      event: { kind: "terminated", sequence: 1 },
+      state: "terminated",
+    });
+    await Promise.resolve();
+    await expect(unmatched).resolves.toMatchObject({ code: "NOT_ATTACHED" });
+    expect(vi.getTimerCount()).toBe(0);
+    await expect(request(bridge, "unity_debug_status", {})).resolves.toEqual({
+      session: null,
+      state: "not-attached",
+      eventSequence: 0,
+    });
+    await runtime.dispose();
+  });
+
+  it("invalidates pending event waits during extension deactivation", async () => {
+    vi.useFakeTimers();
+    const active = session("pending-deactivation");
+    const setup = harness({ activeSession: active });
+    const runtime = await activateWithDependencies(setup.context, setup.boundary);
+    const bridge = setup.bridge();
+    await setup.listeners.tracker!.createDebugAdapterTracker(
+      active as unknown as vscode.DebugSession,
+    );
+    await request(bridge, "unity_debug_list_targets", {});
+    await request(bridge, "unity_debug_attach", { targetId: "opaque-target" });
+    const pending = request(bridge, "unity_debug_wait_for_event", {
+      afterSequence: 0,
+      timeoutMs: 60_000,
+    }).catch((error: unknown) => error);
+    expect(vi.getTimerCount()).toBe(1);
+
+    await runtime.dispose();
+
+    await expect(pending).resolves.toMatchObject({ code: "NOT_ATTACHED" });
+    expect(vi.getTimerCount()).toBe(0);
   });
 
   it.each([
@@ -449,6 +547,26 @@ describe("MCP companion extension composition", () => {
     const setup = harness({ failClose: true });
     const runtime = await activateWithDependencies(setup.context, setup.boundary);
     await expect(runtime.dispose()).rejects.toThrow("close failed");
+    expect(setup.log.slice(-6)).toEqual([
+      "dispose:provider",
+      "close:bridge",
+      "dispose:tracker",
+      "dispose:breakpoints",
+      "dispose:terminate",
+      "dispose:start",
+    ]);
+  });
+
+  it("keeps reverse teardown order when the host disposes subscriptions before deactivate settles", async () => {
+    const setup = harness();
+    const runtime = await activateWithDependencies(setup.context, setup.boundary);
+
+    const deactivation = runtime.dispose();
+    for (const disposable of setup.context.subscriptions) {
+      disposable.dispose();
+    }
+    await deactivation;
+
     expect(setup.log.slice(-6)).toEqual([
       "dispose:provider",
       "close:bridge",
