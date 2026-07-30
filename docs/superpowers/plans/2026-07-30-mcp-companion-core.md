@@ -577,7 +577,9 @@ git commit -m "feat: track debugger sessions for MCP"
 - Test: `tests/mcp-extension/eventBuffer.test.ts`
 
 **Interfaces:**
-- Consumes: session ID, stop generation, normalized event kinds.
+- Consumes: session ID, stop generation, normalized event kinds, and the
+  per-session `EventSequenceCursor` / `ProjectedStateEvent` contract from
+  Task 3.
 - Produces: `SessionCommandQueue.read/write`, `ReferenceStore.create/resolve/invalidate`, and `EventBuffer.append/waitFor`.
 
 - [ ] **Step 1: Write failing concurrency/reference/event tests**
@@ -624,7 +626,8 @@ it("rejects a reference after generation invalidation", () => {
 
 Add fake-clock event tests for 256-item eviction, `afterSequence`, kind filters,
 30-second default, 60-second maximum, cancellation, and no lost event between
-the initial scan and waiter registration.
+the initial scan and waiter registration. Also prove the single sequence
+authority with the interleaving `state(seq1) -> ordinary(seq2) -> state(seq3)`.
 
 - [ ] **Step 2: Run the tests and verify missing modules**
 
@@ -646,8 +649,12 @@ deletes every record for that session. Raw DAP IDs never cross the bridge.
 
 - [ ] **Step 5: Implement the exact event ring**
 
-`append` increments one sequence, truncates output to 65,536 bytes, keeps only
-the newest 256 records, and resolves matching waiters. `waitFor` first scans the
+Construct each per-session buffer with the exact `EventSequenceCursor` shared
+by its `StateProjector`. `append` allocates one new sequence for an ordinary
+event. `appendProjected` accepts a `ProjectedStateEvent` and preserves its
+already-allocated sequence without calling `next()` again; reject duplicate or
+out-of-order projected sequences. Truncate output to 65,536 bytes, keep only
+the newest 256 records, and resolve matching waiters. `waitFor` first scans the
 ring, then registers a waiter, then scans again before returning control to
 close the race. Clamp timeout to `[0, 60_000]`, default `30_000`.
 
