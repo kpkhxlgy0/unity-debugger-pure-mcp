@@ -10,6 +10,7 @@ test("MCP companion is a separate dependent Windows extension", () => {
   assert.equal(manifest.name, "unity-debugger-pure-mcp");
   assert.equal(manifest.version, "0.1.0");
   assert.equal(manifest.engines.vscode, "^1.96.0");
+  assert.deepEqual(manifest.activationEvents, []);
   assert.deepEqual(manifest.extensionDependencies, [
     "kpk.unity-debugger-pure",
   ]);
@@ -32,4 +33,33 @@ test("debugger VSIX excludes companion workspaces", () => {
 test("companion VSIX excludes the workspace parent", () => {
   const ignore = fs.readFileSync("mcp-extension/.vscodeignore", "utf8");
   assert.match(ignore, /^\.\.\/\*\*$/m);
+});
+
+test("base and companion TypeScript programs isolate VS Code declarations", () => {
+  const base = JSON.parse(fs.readFileSync("tsconfig.json", "utf8"));
+  const companion = JSON.parse(
+    fs.readFileSync("mcp-extension/tsconfig.json", "utf8"),
+  );
+  const server = JSON.parse(fs.readFileSync("mcp-server/tsconfig.json", "utf8"));
+
+  assert.equal(base.compilerOptions.skipLibCheck, undefined);
+  assert.doesNotMatch(base.include.join("\n"), /^mcp-(extension|server)\//m);
+  assert.deepEqual(companion.compilerOptions.types, ["node", "vscode"]);
+  assert.deepEqual(companion.compilerOptions.typeRoots, [
+    "./node_modules/@types",
+    "../node_modules/@types",
+  ]);
+  assert.deepEqual(server.compilerOptions.types, ["node"]);
+});
+
+test("extension manifests do not load MCP server runtime dependencies", () => {
+  const manifests = [
+    JSON.parse(fs.readFileSync("package.json", "utf8")),
+    JSON.parse(fs.readFileSync("mcp-extension/package.json", "utf8")),
+  ];
+
+  for (const manifest of manifests) {
+    assert.equal(manifest.dependencies?.["@modelcontextprotocol/sdk"], undefined);
+    assert.equal(manifest.dependencies?.zod, undefined);
+  }
 });
