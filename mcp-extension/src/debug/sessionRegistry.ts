@@ -91,6 +91,19 @@ export class SessionRegistry {
     return selection;
   }
 
+  /** Returns safe projections for the sessions that are currently live. */
+  public list(): readonly SessionSelection[] {
+    return Object.freeze(
+      [...this.#bySessionRef.values()].map((entry) => viewOf(entry)),
+    );
+  }
+
+  /** Resolves an API-started VS Code session without exposing its raw ID. */
+  public findBySessionId(sessionId: string): SessionSelection | undefined {
+    const entry = this.#bySessionId.get(sessionId);
+    return entry === undefined ? undefined : viewOf(entry);
+  }
+
   public resolveDebugSession(selection: SessionSelection): vscode.DebugSession {
     const entry = this.#bySessionRef.get(selection.sessionRef);
     if (entry === undefined) {

@@ -70,3 +70,95 @@ export function dapFailureError(): StructuredToolError {
     action: "Check debugger status before retrying the request.",
   };
 }
+
+export function workspaceUntrustedError(): StructuredToolError {
+  return Object.freeze({
+    code: "WORKSPACE_UNTRUSTED",
+    message: "Trust this workspace before controlling the debugger.",
+    retryable: false,
+    currentState: "not-attached",
+    action: "Use Workspace: Manage Workspace Trust, then retry.",
+  });
+}
+
+export function workspaceNotAllowedError(): StructuredToolError {
+  return Object.freeze({
+    code: "WORKSPACE_NOT_ALLOWED",
+    message: "The requested debugger resource is outside the current workspace.",
+    retryable: false,
+    currentState: "workspace_not_allowed",
+    action: "Use a source file from the current trusted workspace.",
+  });
+}
+
+export function targetWorkspaceNotAllowedError(): StructuredToolError {
+  return Object.freeze({
+    code: "WORKSPACE_NOT_ALLOWED",
+    message: "The selected debugger target is outside the current workspace.",
+    retryable: false,
+    currentState: "workspace_not_allowed",
+    action: "List debugger targets again from the current trusted workspace.",
+  });
+}
+
+export function noTargetError(): StructuredToolError {
+  return Object.freeze({
+    code: "NO_TARGET",
+    message: "No matching Unity debugger target is available.",
+    retryable: true,
+    currentState: "target_unavailable",
+    action: "List debugger targets again and retry with a returned target reference.",
+  });
+}
+
+export function ambiguousTargetError(): StructuredToolError {
+  return Object.freeze({
+    code: "AMBIGUOUS_TARGET",
+    message: "More than one matching Unity debugger session is attached.",
+    retryable: false,
+    currentState: "multiple_sessions",
+    action: "Disconnect an extra session and retry the attach request.",
+  });
+}
+
+export function attachFailedError(): StructuredToolError {
+  return Object.freeze({
+    code: "ATTACH_FAILED",
+    message: "The debugger attach request did not create a tracked session.",
+    retryable: true,
+    currentState: "not_attached",
+    action: "Check debugger status, list targets again, and retry the attach request.",
+  });
+}
+
+export function staleReferenceError(): StructuredToolError {
+  return Object.freeze({
+    code: "STALE_REFERENCE",
+    message: "The debugger reference is stale or invalid.",
+    retryable: false,
+    currentState: "reference_invalid",
+    action: "Request fresh debugger data and retry with its opaque reference.",
+  });
+}
+
+export function notAttachedError(): StructuredToolError {
+  return Object.freeze({
+    code: "NOT_ATTACHED",
+    message: "No matching Unity debugger session is attached.",
+    retryable: true,
+    currentState: "detached",
+    action: "Attach to a debugger target and retry the request.",
+  });
+}
+
+export function sanitizedToolError(error: unknown): StructuredToolError {
+  try {
+    const parsed = STRUCTURED_TOOL_ERROR_SCHEMA.safeParse(error);
+    if (parsed.success) {
+      return Object.freeze(parsed.data);
+    }
+  } catch {
+    // Fall through to one generic error without touching the original again.
+  }
+  return Object.freeze(dapFailureError());
+}
