@@ -59,6 +59,7 @@ interface HarnessOptions {
 
 function harness(options: HarnessOptions = {}) {
   let now = 1_000;
+  let trusted = options.trusted ?? true;
   let currentRoots = options.roots ?? [firstRoot, `${firstRoot}\\.`, secondRoot];
   let entropy = 1;
   const sessions = new SessionRegistry(() => Buffer.alloc(16, entropy++));
@@ -82,7 +83,7 @@ function harness(options: HarnessOptions = {}) {
     queue: new SessionCommandQueue(),
     breakpoints: breakpointRegistry,
     workspace: {
-      isTrusted: () => options.trusted ?? true,
+      isTrusted: () => trusted,
       roots: () => currentRoots,
     },
     debug: { stopDebugging },
@@ -102,6 +103,9 @@ function harness(options: HarnessOptions = {}) {
     },
     setRoots(roots: readonly string[]) {
       currentRoots = roots;
+    },
+    setTrusted(value: boolean) {
+      trusted = value;
     },
   };
 }
@@ -150,6 +154,97 @@ describe("ToolDispatcher lifecycle tools", () => {
     await expect(listTargets(dispatcher)).resolves.toEqual({ targets: [firstTarget] });
 
     expect(discoverTargets).toHaveBeenCalledWith([firstRoot, secondRoot]);
+  });
+
+  it("filters outside and interleaved target results before output or capability caching", async () => {
+    const outsideBefore: PublicEditorTarget = Object.freeze({
+      ...firstTarget,
+      targetId: "outside-before",
+      projectName: "SecretBefore",
+      workspaceRoot: "C:\\private\\Before",
+    });
+    const outsideAfter: PublicEditorTarget = Object.freeze({
+      ...firstTarget,
+      targetId: "outside-after",
+      projectName: "SecretAfter",
+      workspaceRoot: "C:\\private\\After",
+    });
+    const { dispatcher, startAttach } = harness({
+      roots: [firstRoot],
+      targets: [outsideBefore, firstTarget, outsideAfter],
+    });
+
+    const listed = await listTargets(dispatcher) as {
+      readonly targets: readonly PublicEditorTarget[];
+    };
+
+    expect(listed).toEqual({ targets: [firstTarget] });
+    expect(Object.isFrozen(listed.targets)).toBe(true);
+    expect(Object.isFrozen(listed.targets[0])).toBe(true);
+    expect(JSON.stringify(listed)).not.toContain("C:\\\\private");
+    expect(JSON.stringify(listed)).not.toContain("SecretBefore");
+    expect(JSON.stringify(listed)).not.toContain("SecretAfter");
+    expect(() => {
+      (listed.targets as PublicEditorTarget[]).push(outsideBefore);
+    }).toThrow();
+    expect(() => {
+      (listed.targets[0] as { targetId: string }).targetId = "mutated-target";
+    }).toThrow();
+    await expect(
+      dispatcher.call("unity_debug_attach", { targetId: outsideBefore.targetId }, "client-1"),
+    ).rejects.toMatchObject({ code: "NO_TARGET" });
+    await expect(
+      dispatcher.call("unity_debug_attach", { targetId: outsideAfter.targetId }, "client-1"),
+    ).rejects.toMatchObject({ code: "NO_TARGET" });
+    await expect(
+      dispatcher.call("unity_debug_attach", { targetId: firstTarget.targetId }, "client-1"),
+    ).resolves.toMatchObject({ reused: false });
+    expect(startAttach).toHaveBeenCalledOnce();
+  });
+
+  it("drops targets whose workspace root is removed while discovery is pending", async () => {
+    let finishDiscovery!: (targets: readonly PublicEditorTarget[]) => void;
+    const { dispatcher, discoverTargets, startAttach, setRoots } = harness({
+      roots: [firstRoot, secondRoot],
+    });
+    discoverTargets.mockImplementationOnce(async () =>
+      new Promise<readonly PublicEditorTarget[]>((resolve) => {
+        finishDiscovery = resolve;
+      })
+    );
+    const listing = listTargets(dispatcher);
+    await Promise.resolve();
+    setRoots([secondRoot]);
+    finishDiscovery([firstTarget]);
+
+    const listed = await listing;
+    expect(listed).toEqual({ targets: [] });
+    expect(JSON.stringify(listed)).not.toContain(firstRoot);
+    await expect(
+      dispatcher.call("unity_debug_attach", { targetId: firstTarget.targetId }, "client-1"),
+    ).rejects.toMatchObject({ code: "NO_TARGET" });
+    expect(startAttach).not.toHaveBeenCalled();
+  });
+
+  it("does not publish or cache discovery results after workspace trust is revoked", async () => {
+    let finishDiscovery!: (targets: readonly PublicEditorTarget[]) => void;
+    const { dispatcher, discoverTargets, startAttach, setTrusted } = harness();
+    discoverTargets.mockImplementationOnce(async () =>
+      new Promise<readonly PublicEditorTarget[]>((resolve) => {
+        finishDiscovery = resolve;
+      })
+    );
+    const listing = listTargets(dispatcher);
+    await Promise.resolve();
+    setTrusted(false);
+    finishDiscovery([firstTarget]);
+
+    await expect(listing).rejects.toMatchObject({ code: "WORKSPACE_UNTRUSTED" });
+    setTrusted(true);
+    await expect(
+      dispatcher.call("unity_debug_attach", { targetId: firstTarget.targetId }, "client-1"),
+    ).rejects.toMatchObject({ code: "NO_TARGET" });
+    expect(startAttach).not.toHaveBeenCalled();
   });
 
   it("reuses exactly one matching live tracked session", async () => {
@@ -281,6 +376,149 @@ describe("ToolDispatcher lifecycle tools", () => {
     });
   });
 
+  it("serializes same-root attach decisions across clients and reuses the first session", async () => {
+    let finishAttach!: (started: { sessionId: string; targetId: string }) => void;
+    const { dispatcher, sessions, startAttach } = harness();
+    await listTargets(dispatcher, "client-1");
+    await listTargets(dispatcher, "client-2");
+    startAttach.mockImplementationOnce(async () =>
+      new Promise<{ sessionId: string; targetId: string }>((resolve) => {
+        finishAttach = resolve;
+      })
+    );
+
+    const first = dispatcher.call(
+      "unity_debug_attach",
+      { targetId: firstTarget.targetId },
+      "client-1",
+    );
+    const second = dispatcher.call(
+      "unity_debug_attach",
+      { targetId: firstTarget.targetId },
+      "client-2",
+    );
+    await Promise.resolve();
+    await Promise.resolve();
+    const startsBeforeRelease = startAttach.mock.calls.length;
+    const startedSession = debugSession("serialized-session");
+    sessions.register(startedSession, true);
+    finishAttach({
+      sessionId: startedSession.id,
+      targetId: firstTarget.targetId,
+    });
+    const [firstResult, secondResult] = await Promise.all([first, second]);
+
+    expect(startsBeforeRelease).toBe(1);
+    expect(startAttach).toHaveBeenCalledOnce();
+    expect(firstResult).toMatchObject({ reused: false });
+    expect(secondResult).toMatchObject({ reused: true });
+    expect((firstResult as { session: unknown }).session).toEqual(
+      (secondResult as { session: unknown }).session,
+    );
+  });
+
+  it("deterministically consumes one same-client capability before an attach waits", async () => {
+    let finishAttach!: (started: { sessionId: string; targetId: string }) => void;
+    const { dispatcher, sessions, startAttach } = harness();
+    await listTargets(dispatcher, "client-1");
+    startAttach.mockImplementationOnce(async () =>
+      new Promise<{ sessionId: string; targetId: string }>((resolve) => {
+        finishAttach = resolve;
+      })
+    );
+
+    const first = dispatcher.call(
+      "unity_debug_attach",
+      { targetId: firstTarget.targetId },
+      "client-1",
+    );
+    const repeated = dispatcher.call(
+      "unity_debug_attach",
+      { targetId: firstTarget.targetId },
+      "client-1",
+    );
+    await expect(repeated).rejects.toMatchObject({ code: "NO_TARGET" });
+    const startedSession = debugSession("same-client-session");
+    sessions.register(startedSession, true);
+    finishAttach({
+      sessionId: startedSession.id,
+      targetId: firstTarget.targetId,
+    });
+
+    await expect(first).resolves.toMatchObject({ reused: false });
+    expect(startAttach).toHaveBeenCalledOnce();
+  });
+
+  it("cancels a second client that disconnects while waiting for the attach gate", async () => {
+    let finishAttach!: (started: { sessionId: string; targetId: string }) => void;
+    const { dispatcher, sessions, startAttach } = harness();
+    await listTargets(dispatcher, "client-1");
+    await listTargets(dispatcher, "client-2");
+    startAttach.mockImplementationOnce(async () =>
+      new Promise<{ sessionId: string; targetId: string }>((resolve) => {
+        finishAttach = resolve;
+      })
+    );
+    const first = dispatcher.call(
+      "unity_debug_attach",
+      { targetId: firstTarget.targetId },
+      "client-1",
+    );
+    const waiting = dispatcher.call(
+      "unity_debug_attach",
+      { targetId: firstTarget.targetId },
+      "client-2",
+    );
+    await Promise.resolve();
+    await Promise.resolve();
+    dispatcher.onDisconnect("client-2");
+    const startedSession = debugSession("first-client-session");
+    sessions.register(startedSession, true);
+    finishAttach({
+      sessionId: startedSession.id,
+      targetId: firstTarget.targetId,
+    });
+
+    await expect(first).resolves.toMatchObject({ reused: false });
+    await expect(waiting).rejects.toMatchObject({ code: "CANCELLED" });
+    expect(startAttach).toHaveBeenCalledOnce();
+  });
+
+  it("does not start a queued attach after workspace trust is revoked", async () => {
+    let finishAttach!: (started: { sessionId: string; targetId: string }) => void;
+    const { dispatcher, sessions, startAttach, setTrusted } = harness();
+    await listTargets(dispatcher, "client-1");
+    await listTargets(dispatcher, "client-2");
+    startAttach.mockImplementationOnce(async () =>
+      new Promise<{ sessionId: string; targetId: string }>((resolve) => {
+        finishAttach = resolve;
+      })
+    );
+    const first = dispatcher.call(
+      "unity_debug_attach",
+      { targetId: firstTarget.targetId },
+      "client-1",
+    );
+    const queued = dispatcher.call(
+      "unity_debug_attach",
+      { targetId: firstTarget.targetId },
+      "client-2",
+    );
+    await Promise.resolve();
+    await Promise.resolve();
+    setTrusted(false);
+    const startedSession = debugSession("started-before-trust-revocation");
+    sessions.register(startedSession, true);
+    finishAttach({
+      sessionId: startedSession.id,
+      targetId: firstTarget.targetId,
+    });
+
+    await expect(first).rejects.toMatchObject({ code: "WORKSPACE_UNTRUSTED" });
+    await expect(queued).rejects.toMatchObject({ code: "WORKSPACE_UNTRUSTED" });
+    expect(startAttach).toHaveBeenCalledOnce();
+  });
+
   it("invalidates earlier capabilities before awaiting a failed target refresh", async () => {
     const { dispatcher, discoverTargets, startAttach } = harness();
     await listTargets(dispatcher);
@@ -394,6 +632,65 @@ describe("ToolDispatcher lifecycle tools", () => {
       terminated: true,
     });
     expect(stopDebugging).toHaveBeenCalledWith(live);
+  });
+
+  it("serializes explicit termination behind the same session write queue", async () => {
+    let finishRequest!: () => void;
+    const customRequest = vi.fn(async () => {
+      await new Promise<void>((resolve) => { finishRequest = resolve; });
+      return {};
+    });
+    const { dispatcher, sessions, stopDebugging } = harness();
+    const live = debugSession("live-session", firstRoot, customRequest);
+    const selection = sessions.register(live, true)!;
+    const exception = dispatcher.call("unity_debug_set_exception_breakpoints", {
+      sessionRef: selection.sessionRef,
+      mode: "uncaught",
+    }, "client-1");
+    await Promise.resolve();
+    await Promise.resolve();
+    const terminate = dispatcher.call("unity_debug_disconnect", {
+      sessionRef: selection.sessionRef,
+      terminateSession: true,
+    }, "client-2");
+    await Promise.resolve();
+    const stopsBeforeRelease = stopDebugging.mock.calls.length;
+    finishRequest();
+
+    await Promise.all([exception, terminate]);
+    expect(stopsBeforeRelease).toBe(0);
+    expect(stopDebugging).toHaveBeenCalledOnce();
+    expect(stopDebugging).toHaveBeenCalledWith(live);
+  });
+
+  it("cancels a queued explicit termination before stopDebugging", async () => {
+    let finishRequest!: () => void;
+    const customRequest = vi.fn(async () => {
+      await new Promise<void>((resolve) => { finishRequest = resolve; });
+      return {};
+    });
+    const { dispatcher, sessions, stopDebugging } = harness();
+    const selection = sessions.register(
+      debugSession("live-session", firstRoot, customRequest),
+      true,
+    )!;
+    const exception = dispatcher.call("unity_debug_set_exception_breakpoints", {
+      sessionRef: selection.sessionRef,
+      mode: "uncaught",
+    }, "client-1");
+    await Promise.resolve();
+    await Promise.resolve();
+    const controller = new AbortController();
+    const terminate = dispatcher.call("unity_debug_disconnect", {
+      sessionRef: selection.sessionRef,
+      terminateSession: true,
+    }, "client-2", controller.signal);
+    controller.abort();
+    finishRequest();
+
+    await expect(exception).resolves.toMatchObject({ mode: "uncaught" });
+    await expect(terminate).rejects.toMatchObject({ code: "CANCELLED" });
+    expect(stopDebugging).not.toHaveBeenCalled();
   });
 
   it("clears selections and target capabilities on bridge disconnect", async () => {
@@ -518,6 +815,91 @@ describe("ToolDispatcher lifecycle tools", () => {
       command: "setExceptionBreakpoints",
       args: { filters: ["all"] },
     });
+  });
+
+  it("rejects a pre-aborted side-effect request before sending DAP", async () => {
+    const customRequest = vi.fn(async () => ({}));
+    const { dispatcher, sessions } = harness();
+    const selection = sessions.register(
+      debugSession("live-session", firstRoot, customRequest),
+      true,
+    )!;
+    const controller = new AbortController();
+    controller.abort();
+
+    await expect(
+      dispatcher.call("unity_debug_set_exception_breakpoints", {
+        sessionRef: selection.sessionRef,
+        mode: "all",
+      }, "client-1", controller.signal),
+    ).rejects.toMatchObject({ code: "CANCELLED" });
+    expect(customRequest).not.toHaveBeenCalled();
+  });
+
+  it("cancels a queued exception request when its bridge client disconnects", async () => {
+    let finishFirst!: () => void;
+    const requests: string[] = [];
+    const customRequest = vi.fn(async () => {
+      requests.push("request");
+      if (requests.length === 1) {
+        await new Promise<void>((resolve) => { finishFirst = resolve; });
+      }
+      return {};
+    });
+    const { dispatcher, sessions } = harness();
+    const selection = sessions.register(
+      debugSession("live-session", firstRoot, customRequest),
+      true,
+    )!;
+    const first = dispatcher.call("unity_debug_set_exception_breakpoints", {
+      sessionRef: selection.sessionRef,
+      mode: "uncaught",
+    }, "client-1");
+    const second = dispatcher.call("unity_debug_set_exception_breakpoints", {
+      sessionRef: selection.sessionRef,
+      mode: "all",
+    }, "client-2");
+    await Promise.resolve();
+    await Promise.resolve();
+    dispatcher.onDisconnect("client-2");
+    finishFirst();
+
+    await expect(first).resolves.toMatchObject({ mode: "uncaught" });
+    await expect(second).rejects.toMatchObject({ code: "CANCELLED" });
+    expect(requests).toEqual(["request"]);
+  });
+
+  it("does not send a queued exception request after workspace trust is revoked", async () => {
+    let finishFirst!: () => void;
+    const requests: string[] = [];
+    const customRequest = vi.fn(async () => {
+      requests.push("request");
+      if (requests.length === 1) {
+        await new Promise<void>((resolve) => { finishFirst = resolve; });
+      }
+      return {};
+    });
+    const { dispatcher, sessions, setTrusted } = harness();
+    const selection = sessions.register(
+      debugSession("live-session", firstRoot, customRequest),
+      true,
+    )!;
+    const first = dispatcher.call("unity_debug_set_exception_breakpoints", {
+      sessionRef: selection.sessionRef,
+      mode: "uncaught",
+    }, "client-1");
+    const second = dispatcher.call("unity_debug_set_exception_breakpoints", {
+      sessionRef: selection.sessionRef,
+      mode: "all",
+    }, "client-2");
+    await Promise.resolve();
+    await Promise.resolve();
+    setTrusted(false);
+    finishFirst();
+
+    await expect(first).resolves.toMatchObject({ mode: "uncaught" });
+    await expect(second).rejects.toMatchObject({ code: "WORKSPACE_UNTRUSTED" });
+    expect(requests).toEqual(["request"]);
   });
 
   it("uses strict bounded schemas and sanitizes validation and debugger failures", async () => {

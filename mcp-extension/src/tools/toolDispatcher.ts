@@ -41,6 +41,7 @@ import {
 
 const DEFAULT_CLIENT_ID = "default";
 const TARGET_CAPABILITY_TTL_MS = 60_000;
+const ATTACH_QUEUE_KEY = "\0unity-debugger-pure-mcp/attach";
 
 interface TargetCapabilities {
   readonly expiresAt: number;
@@ -133,8 +134,12 @@ export class ToolDispatcher {
     name: ToolName,
     input: unknown,
     clientId = DEFAULT_CLIENT_ID,
+    signal?: AbortSignal,
   ): Promise<unknown> {
     try {
+      if (signal?.aborted === true) {
+        throw cancelledError();
+      }
       if (!this.#workspace.isTrusted()) {
         throw workspaceUntrustedError();
       }
@@ -142,15 +147,20 @@ export class ToolDispatcher {
       switch (name) {
         case "unity_debug_list_targets":
           LIST_TARGETS_INPUT_SCHEMA.parse(input);
-          return await this.#listTargets(clientId);
+          return await this.#listTargets(clientId, signal);
         case "unity_debug_attach":
-          return await this.#attach(ATTACH_INPUT_SCHEMA.parse(input), clientId);
+          return await this.#attach(
+            ATTACH_INPUT_SCHEMA.parse(input),
+            clientId,
+            signal,
+          );
         case "unity_debug_status":
           return this.#status(STATUS_INPUT_SCHEMA.parse(input), clientId);
         case "unity_debug_disconnect":
           return await this.#disconnect(
             DISCONNECT_INPUT_SCHEMA.parse(input),
             clientId,
+            signal,
           );
         case "unity_debug_list_breakpoints":
           LIST_BREAKPOINTS_INPUT_SCHEMA.parse(input);
@@ -175,6 +185,7 @@ export class ToolDispatcher {
           return await this.#setExceptionBreakpoints(
             SET_EXCEPTION_BREAKPOINTS_INPUT_SCHEMA.parse(input),
             clientId,
+            signal,
           );
         default:
           throw new Error("Tool implementation is not available.");
@@ -195,36 +206,61 @@ export class ToolDispatcher {
     }
   }
 
-  async #listTargets(clientId: string): Promise<Readonly<{ targets: readonly PublicEditorTarget[] }>> {
+  async #listTargets(
+    clientId: string,
+    signal?: AbortSignal,
+  ): Promise<Readonly<{ targets: readonly PublicEditorTarget[] }>> {
     const client = this.#clientState(clientId);
     const operation = {};
     client.targets = undefined;
     client.targetOperation = operation;
     const issuedAt = this.#now();
-    const targets = await this.#dependency.discoverTargets(this.#workspaceRoots());
-    if (!this.#isCurrentClient(clientId, client) || client.targetOperation !== operation) {
+    const requestedRoots = this.#workspaceRoots();
+    const requestedRootKeys = new Set(requestedRoots.map(canonicalPathKey));
+    const discovered = await this.#dependency.discoverTargets(requestedRoots);
+    if (
+      signal?.aborted === true ||
+      !this.#isCurrentClient(clientId, client) ||
+      client.targetOperation !== operation
+    ) {
       throw cancelledError();
     }
+    if (!this.#workspace.isTrusted()) {
+      throw workspaceUntrustedError();
+    }
+    const freshRootKeys = new Set(this.#workspaceRoots().map(canonicalPathKey));
     const capabilities = new Map<string, PublicEditorTarget>();
-    for (const target of targets) {
-      if (capabilities.has(target.targetId)) {
+    const targets: PublicEditorTarget[] = [];
+    for (const target of discovered) {
+      const workspaceRootKey = canonicalPathKey(target.workspaceRoot);
+      if (
+        !requestedRootKeys.has(workspaceRootKey) ||
+        !freshRootKeys.has(workspaceRootKey)
+      ) {
+        continue;
+      }
+      const safeTarget = safeTargetView(target);
+      if (capabilities.has(safeTarget.targetId)) {
         throw new Error("Debugger dependency returned duplicate target references.");
       }
-      capabilities.set(target.targetId, target);
+      capabilities.set(safeTarget.targetId, safeTarget);
+      targets.push(safeTarget);
     }
     client.targets = {
       expiresAt: issuedAt + TARGET_CAPABILITY_TTL_MS,
       byTargetId: capabilities,
     };
     client.targetOperation = undefined;
-    return Object.freeze({ targets });
+    return Object.freeze({ targets: Object.freeze(targets) });
   }
 
   async #attach(
     input: Readonly<{ targetId: string }>,
     clientId: string,
+    signal?: AbortSignal,
   ): Promise<Readonly<AttachedStatus & { readonly reused: boolean }>> {
     const client = this.#clientState(clientId);
+    this.#assertRequestAuthorized(clientId, client, signal);
     const capabilities = client.targets;
     if (capabilities !== undefined && capabilities.expiresAt <= this.#now()) {
       client.targets = undefined;
@@ -236,6 +272,31 @@ export class ToolDispatcher {
     // Target IDs are capabilities issued by list_targets. Consume before any
     // reuse or start attempt so retries must rediscover current state.
     client.targets!.byTargetId.delete(input.targetId);
+
+    return this.#queue.write(ATTACH_QUEUE_KEY, async () =>
+      this.#attachUnderGate(
+        input.targetId,
+        target,
+        capabilities!.expiresAt,
+        clientId,
+        client,
+        signal,
+      )
+    );
+  }
+
+  async #attachUnderGate(
+    targetId: string,
+    target: PublicEditorTarget,
+    expiresAt: number,
+    clientId: string,
+    client: ClientState,
+    signal?: AbortSignal,
+  ): Promise<Readonly<AttachedStatus & { readonly reused: boolean }>> {
+    this.#assertRequestAuthorized(clientId, client, signal);
+    if (expiresAt <= this.#now()) {
+      throw noTargetError();
+    }
 
     const currentRootKeys = new Set(
       this.#workspaceRoots().map((workspaceRoot) => canonicalPathKey(workspaceRoot)),
@@ -255,10 +316,9 @@ export class ToolDispatcher {
       selection = matching[0];
       reused = true;
     } else {
-      const started = await this.#dependency.startAttach(input.targetId);
-      if (!this.#isCurrentClient(clientId, client)) {
-        throw cancelledError();
-      }
+      this.#assertRequestAuthorized(clientId, client, signal);
+      const started = await this.#dependency.startAttach(targetId);
+      this.#assertRequestAuthorized(clientId, client, signal);
       const registered = this.#sessions.findBySessionId(started.sessionId);
       if (registered === undefined || !registered.tracked) {
         throw attachFailedError();
@@ -269,9 +329,11 @@ export class ToolDispatcher {
       reused = false;
     }
 
+    const status = this.#attachedStatus(selection);
+    this.#assertRequestAuthorized(clientId, client, signal);
     client.selectionRef = selection.sessionRef;
     return Object.freeze({
-      ...this.#attachedStatus(selection),
+      ...status,
       reused,
     });
   }
@@ -303,22 +365,41 @@ export class ToolDispatcher {
   async #disconnect(
     input: Readonly<{ sessionRef?: string; terminateSession: boolean }>,
     clientId: string,
+    signal?: AbortSignal,
   ): Promise<Readonly<{
     sessionRef: string;
     terminated: boolean;
   }>> {
+    const client = this.#clientState(clientId);
+    this.#assertRequestAuthorized(clientId, client, signal);
     const selection = this.#requiredSelection(input.sessionRef, clientId);
-    const liveSession = this.#sessions.resolveDebugSession(selection);
-    const client = this.#clients.get(clientId);
-    if (client?.selectionRef === selection.sessionRef) {
-      client.selectionRef = undefined;
+    if (!input.terminateSession) {
+      this.#sessions.resolveDebugSession(selection);
+      if (client.selectionRef === selection.sessionRef) {
+        client.selectionRef = undefined;
+      }
+      return Object.freeze({
+        sessionRef: selection.sessionRef,
+        terminated: false,
+      });
     }
-    if (input.terminateSession) {
+
+    return this.#queue.write(selection.sessionRef, async () => {
+      this.#assertRequestAuthorized(clientId, client, signal);
+      const current = this.#sessions.select(selection.sessionRef);
+      const liveSession = this.#sessions.resolveDebugSession(current);
+      this.#assertRequestAuthorized(clientId, client, signal);
       await this.#debug.stopDebugging(liveSession);
-    }
-    return Object.freeze({
-      sessionRef: selection.sessionRef,
-      terminated: input.terminateSession,
+      if (
+        this.#isCurrentClient(clientId, client) &&
+        client.selectionRef === selection.sessionRef
+      ) {
+        client.selectionRef = undefined;
+      }
+      return Object.freeze({
+        sessionRef: selection.sessionRef,
+        terminated: true,
+      });
     });
   }
 
@@ -328,15 +409,20 @@ export class ToolDispatcher {
       mode: ExceptionBreakpointMode;
     }>,
     clientId: string,
+    signal?: AbortSignal,
   ): Promise<Readonly<{ sessionRef: string; mode: ExceptionBreakpointMode }>> {
+    const client = this.#clientState(clientId);
+    this.#assertRequestAuthorized(clientId, client, signal);
     const selection = this.#requiredSelection(input.sessionRef, clientId);
     const filters = input.mode === "none" ? [] : [input.mode];
 
     await this.#queue.write(selection.sessionRef, async () => {
+      this.#assertRequestAuthorized(clientId, client, signal);
       // The queue may have waited behind another command; resolve again at the
       // point of use instead of trusting an earlier DebugSession object.
       const current = this.#sessions.select(selection.sessionRef);
       const liveSession = this.#sessions.resolveDebugSession(current);
+      this.#assertRequestAuthorized(clientId, client, signal);
       await liveSession.customRequest("setExceptionBreakpoints", { filters });
     });
 
@@ -428,6 +514,19 @@ export class ToolDispatcher {
   #isCurrentClient(clientId: string, state: ClientState): boolean {
     return state.active && this.#clients.get(clientId) === state;
   }
+
+  #assertRequestAuthorized(
+    clientId: string,
+    state: ClientState,
+    signal?: AbortSignal,
+  ): void {
+    if (signal?.aborted === true || !this.#isCurrentClient(clientId, state)) {
+      throw cancelledError();
+    }
+    if (!this.#workspace.isTrusted()) {
+      throw workspaceUntrustedError();
+    }
+  }
 }
 
 function notAttachedStatus(): NotAttachedStatus {
@@ -441,4 +540,15 @@ function notAttachedStatus(): NotAttachedStatus {
 function canonicalPathKey(value: string): string {
   const resolved = path.resolve(value);
   return process.platform === "win32" ? resolved.toLowerCase() : resolved;
+}
+
+function safeTargetView(target: PublicEditorTarget): PublicEditorTarget {
+  return Object.freeze({
+    targetId: target.targetId,
+    processId: target.processId,
+    projectName: target.projectName,
+    workspaceRoot: target.workspaceRoot,
+    projectVersion: target.projectVersion,
+    source: target.source,
+  });
 }

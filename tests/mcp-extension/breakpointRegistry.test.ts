@@ -1,3 +1,11 @@
+import {
+  mkdirSync,
+  mkdtempSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -234,4 +242,59 @@ describe("BreakpointRegistry", () => {
     expect(JSON.stringify(listed)).not.toContain("secret-user-condition");
     expect(JSON.stringify(listed)).not.toContain("private");
   });
+
+  it("uses the default realpath boundary for real files and rejects missing or linked escapes", () => {
+    const temporaryRoot = mkdtempSync(
+      path.join(os.tmpdir(), "unity-debugger-mcp-breakpoints-"),
+    );
+    const workspace = path.join(temporaryRoot, "workspace");
+    const outside = path.join(temporaryRoot, "outside");
+    const realSource = path.join(workspace, "Assets", "Player.cs");
+    const missingSource = path.join(workspace, "Assets", "Missing.cs");
+    const outsideSource = path.join(outside, "Secret.cs");
+    const linkedDirectory = path.join(workspace, "LinkedOutside");
+    try {
+      mkdirSync(path.dirname(realSource), { recursive: true });
+      mkdirSync(outside, { recursive: true });
+      writeFileSync(realSource, "internal sealed class Player {}\n", "utf8");
+      writeFileSync(outsideSource, "internal sealed class Secret {}\n", "utf8");
+      symlinkSync(
+        outside,
+        linkedDirectory,
+        process.platform === "win32" ? "junction" : "dir",
+      );
+      const breakpoints = new BreakpointRegistry({
+        randomBytes: () => Buffer.alloc(32, 0x4b),
+      });
+
+      expect(() => breakpoints.add({ sourcePath: realSource, line: 1 }, [workspace]))
+        .not.toThrow();
+      expect(() => breakpoints.add({ sourcePath: missingSource, line: 1 }, [workspace]))
+        .toThrowError(expect.objectContaining({ code: "WORKSPACE_NOT_ALLOWED" }));
+      expect(() => breakpoints.add({
+        sourcePath: path.join(linkedDirectory, "Secret.cs"),
+        line: 1,
+      }, [workspace])).toThrowError(
+        expect.objectContaining({ code: "WORKSPACE_NOT_ALLOWED" }),
+      );
+      expect(vscode.debug.addBreakpoints).toHaveBeenCalledOnce();
+    } finally {
+      removeValidatedTemporaryDirectory(temporaryRoot);
+    }
+  });
 });
+
+function removeValidatedTemporaryDirectory(temporaryRoot: string): void {
+  const resolvedTemporaryRoot = path.resolve(temporaryRoot);
+  const resolvedTemporaryBase = path.resolve(os.tmpdir());
+  const relative = path.relative(resolvedTemporaryBase, resolvedTemporaryRoot);
+  if (
+    relative.length === 0 ||
+    relative === ".." ||
+    relative.startsWith(`..${path.sep}`) ||
+    path.isAbsolute(relative)
+  ) {
+    throw new Error("Refusing to remove a directory outside the temporary base.");
+  }
+  rmSync(resolvedTemporaryRoot, { recursive: true, force: true });
+}
