@@ -6,6 +6,8 @@
     ]
   },
   "include": [
-    "src/**/*.ts"
+    "typecheck-anchor.d.ts",
+    "src/**/*.ts",
+    "../tests/mcp-server/**/*.ts"
   ]
 }

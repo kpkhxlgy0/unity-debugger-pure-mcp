@@ -63,3 +63,39 @@ test("extension manifests do not load MCP server runtime dependencies", () => {
     assert.equal(manifest.dependencies?.zod, undefined);
   }
 });
+
+test("MCP workspace typechecks include tests and run from normal scripts", () => {
+  const manifest = JSON.parse(fs.readFileSync("package.json", "utf8"));
+  const companion = JSON.parse(
+    fs.readFileSync("mcp-extension/tsconfig.json", "utf8"),
+  );
+  const server = JSON.parse(fs.readFileSync("mcp-server/tsconfig.json", "utf8"));
+
+  assert.deepEqual(companion.include, [
+    "src/**/*.ts",
+    "../tests/mcp-extension/**/*.ts",
+  ]);
+  assert.deepEqual(server.include, [
+    "typecheck-anchor.d.ts",
+    "src/**/*.ts",
+    "../tests/mcp-server/**/*.ts",
+  ]);
+  assert.ok(fs.existsSync("mcp-server/typecheck-anchor.d.ts"));
+  assert.equal(manifest.scripts["typecheck:base"], "tsc -p tsconfig.json");
+  assert.equal(
+    manifest.scripts["typecheck:mcp-extension"],
+    "tsc -p mcp-extension/tsconfig.json",
+  );
+  assert.equal(
+    manifest.scripts["typecheck:mcp-server"],
+    "tsc -p mcp-server/tsconfig.json",
+  );
+  assert.equal(
+    manifest.scripts.typecheck,
+    "npm run typecheck:base && npm run typecheck:mcp-extension && npm run typecheck:mcp-server",
+  );
+  assert.equal(
+    manifest.scripts["test:mcp"],
+    "npm run typecheck:mcp-extension && npm run test:mcp-extension && npm run typecheck:mcp-server && npm run test:mcp-server",
+  );
+});
