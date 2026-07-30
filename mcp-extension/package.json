@@ -38,7 +38,8 @@
     ]
   },
   "scripts": {
-    "build": "node esbuild.mjs"
+    "build": "node esbuild.mjs",
+    "package:vsix": "vsce package --no-dependencies --out ../dist/unity-debugger-pure-mcp-0.1.0.vsix"
   },
   "devDependencies": {
     "@types/vscode": "1.101.0"
