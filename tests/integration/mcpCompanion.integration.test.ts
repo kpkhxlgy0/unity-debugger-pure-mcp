@@ -62,7 +62,7 @@ vi.mock("vscode", () => {
   };
 });
 
-import type * as vscode from "vscode";
+import * as vscode from "vscode";
 
 import {
   BridgeHost,
@@ -107,6 +107,7 @@ class FakeVsCodeSession {
   };
   public readonly getDebugProtocolBreakpoint = vi.fn();
   public readonly evaluationContexts: string[] = [];
+  public readonly exceptionBreakpointRequests: unknown[] = [];
   public scenario: Scenario = "normal";
   public tracker?: vscode.DebugAdapterTracker;
 
@@ -169,6 +170,7 @@ class FakeVsCodeSession {
         }
         return { allThreadsContinued: true };
       case "setExceptionBreakpoints":
+        this.exceptionBreakpointRequests.push(body);
         if (this.scenario === "exception") {
           this.emit({
             type: "event",
@@ -328,6 +330,20 @@ describe("packaged MCP companion simulated session", () => {
         condition: "health > 0",
       });
       expect((added.breakpoint as { breakpointRef: string }).breakpointRef).toBeTypeOf("string");
+      expect(vscode.debug.breakpoints).toHaveLength(1);
+      const [createdBreakpoint] = vscode.debug.breakpoints as readonly vscode.SourceBreakpoint[];
+      expect(createdBreakpoint).toBeInstanceOf(vscode.SourceBreakpoint);
+      expect(createdBreakpoint).toMatchObject({
+        enabled: true,
+        condition: "health > 0",
+        location: {
+          uri: { fsPath: sourcePath, scheme: "file" },
+          range: {
+            start: { line: 0, character: 0 },
+            end: { line: 0, character: 0 },
+          },
+        },
+      });
       const firstStop = await success(client, "unity_debug_wait_for_event", {
         sessionRef,
         afterSequence: 0,
@@ -366,7 +382,7 @@ describe("packaged MCP companion simulated session", () => {
         frameRef,
         expression: "ApplyDamage()",
         allowSideEffects: false,
-      })).resolves.toBe("DAP_FAILURE");
+      })).resolves.toMatchObject({ code: "DAP_FAILURE" });
       expect(session.evaluationContexts).toEqual(["hover"]);
       await expect(success(client, "unity_debug_evaluate_explicit", {
         sessionRef,
@@ -393,7 +409,13 @@ describe("packaged MCP companion simulated session", () => {
       });
       expect(reloadStarted.event).toMatchObject({ kind: "reload-started", phase: "reloading" });
       await expect(toolError(client, "unity_debug_scopes", { sessionRef, frameRef }))
-        .resolves.toBe("RELOADING");
+        .resolves.toEqual({
+          code: "RELOADING",
+          message: "The Unity domain is reloading.",
+          retryable: true,
+          currentState: "reloading",
+          action: "Wait for reload completion before retrying the request.",
+        });
 
       const reloadSequence = (reloadStarted.event as { sequence: number }).sequence;
       session.completeReload();
@@ -405,7 +427,35 @@ describe("packaged MCP companion simulated session", () => {
       });
       session.stopAfterReload();
       await expect(toolError(client, "unity_debug_scopes", { sessionRef, frameRef }))
-        .resolves.toBe("STALE_REFERENCE");
+        .resolves.toMatchObject({ code: "STALE_REFERENCE" });
+      const refreshedThreads = await success(client, "unity_debug_threads", { sessionRef });
+      const refreshedThreadRef = (
+        refreshedThreads.threads as Array<{ threadRef: string }>
+      )[0]!.threadRef;
+      expect(refreshedThreadRef).not.toBe(threadRef);
+      const refreshedStack = await success(client, "unity_debug_stack_trace", {
+        sessionRef,
+        threadRef: refreshedThreadRef,
+      });
+      const refreshedFrameRef = (
+        refreshedStack.frames as Array<{ frameRef: string }>
+      )[0]!.frameRef;
+      expect(refreshedFrameRef).not.toBe(frameRef);
+      const refreshedScopes = await success(client, "unity_debug_scopes", {
+        sessionRef,
+        frameRef: refreshedFrameRef,
+      });
+      const refreshedVariablesRef = (
+        refreshedScopes.scopes as Array<{ variablesRef: string }>
+      )[0]!.variablesRef;
+      expect(refreshedVariablesRef).not.toBe(variablesRef);
+      const retriedVariables = await success(client, "unity_debug_variables", {
+        sessionRef,
+        variablesRef: refreshedVariablesRef,
+      });
+      expect(retriedVariables.variables).toEqual(expect.arrayContaining([
+        expect.objectContaining({ name: "health", value: "100" }),
+      ]));
       const retriedSnapshot = await success(client, "unity_debug_snapshot", { sessionRef });
       expect(retriedSnapshot).toMatchObject({ state: "stopped", reason: "breakpoint" });
 
@@ -415,6 +465,7 @@ describe("packaged MCP companion simulated session", () => {
         sessionRef,
         mode: "all",
       });
+      expect(session.exceptionBreakpointRequests).toEqual([{ filters: ["all"] }]);
       const exceptionStop = await success(client, "unity_debug_wait_for_event", {
         sessionRef,
         afterSequence: beforeException,
@@ -457,13 +508,31 @@ async function toolError(
   client: Client,
   name: ToolName,
   args: Record<string, unknown>,
-): Promise<string> {
+): Promise<{
+  readonly code: string;
+  readonly message: string;
+  readonly retryable: boolean;
+  readonly currentState: string;
+  readonly action: string;
+}> {
   const result = await client.callTool({ name, arguments: args });
   const response = result as {
     readonly isError?: boolean;
-    readonly structuredContent?: { readonly code?: unknown };
+    readonly structuredContent?: Record<string, unknown>;
   };
   expect(response.isError).toBe(true);
-  expect(response.structuredContent?.code).toBeTypeOf("string");
-  return response.structuredContent!.code as string;
+  expect(response.structuredContent).toMatchObject({
+    code: expect.any(String),
+    message: expect.any(String),
+    retryable: expect.any(Boolean),
+    currentState: expect.any(String),
+    action: expect.any(String),
+  });
+  return response.structuredContent as {
+    readonly code: string;
+    readonly message: string;
+    readonly retryable: boolean;
+    readonly currentState: string;
+    readonly action: string;
+  };
 }

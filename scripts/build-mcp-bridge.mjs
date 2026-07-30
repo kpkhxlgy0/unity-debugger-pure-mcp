@@ -6,6 +6,8 @@ import { createServer } from "node:net";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { SmokeStdoutValidator } from "./mcp-smoke-stdout.mjs";
+
 const requiredNodeVersion = "v26.5.0";
 if (process.version !== requiredNodeVersion) {
   throw new Error(
@@ -102,9 +104,8 @@ async function smokeTest(executablePath) {
   let child;
   let timeout;
   let childClosed = false;
-  let stdout = "";
   let stderr = "";
-  const messages = [];
+  const stdoutValidator = new SmokeStdoutValidator({ expectedToolCount: 19 });
   try {
     child = spawn(executablePath, ["--pipe", pipeName, "--token", token], {
       cwd: repositoryRoot,
@@ -115,26 +116,14 @@ async function smokeTest(executablePath) {
     child.stdout.setEncoding("utf8");
     child.stderr.setEncoding("utf8");
     child.stdout.on("data", (chunk) => {
-      stdout += chunk;
-      while (stdout.includes("\n")) {
-        const newline = stdout.indexOf("\n");
-        const line = stdout.slice(0, newline).replace(/\r$/, "");
-        stdout = stdout.slice(newline + 1);
-        if (line.length === 0) {
-          continue;
-        }
-        let message;
-        try {
-          message = JSON.parse(line);
-        } catch {
-          protocolFailure = new Error(`MCP bridge wrote non-protocol stdout: ${line}`);
-          child.kill();
-          return;
-        }
-        messages.push(message);
-        if (message.id === 2) {
+      try {
+        const responseIds = stdoutValidator.push(chunk);
+        if (responseIds.includes(2)) {
           child.stdin.end();
         }
+      } catch (error) {
+        protocolFailure = error;
+        child.kill();
       }
     });
     child.stderr.on("data", (chunk) => {
@@ -182,11 +171,9 @@ async function smokeTest(executablePath) {
     if (protocolFailure !== undefined) {
       throw protocolFailure;
     }
-    if (stdout.length !== 0) {
-      throw new Error("MCP bridge wrote an incomplete stdout protocol frame.");
-    }
-    const initialized = messages.find((message) => message.id === 1);
-    const tools = messages.find((message) => message.id === 2)?.result?.tools;
+    const messages = stdoutValidator.finish();
+    const initialized = messages.get(1);
+    const tools = messages.get(2)?.result?.tools;
     if (initialized?.result === undefined || !Array.isArray(tools) || tools.length !== 19) {
       throw new Error("MCP bridge SEA failed initialize/list-tools smoke validation.");
     }

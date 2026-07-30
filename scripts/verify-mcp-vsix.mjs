@@ -23,6 +23,7 @@ if (!requested) {
 const vsixPath = path.resolve(repositoryRoot, requested);
 const archive = new AdmZip(vsixPath);
 const files = new Map();
+const seenPaths = new Set();
 for (const entry of archive.getEntries()) {
   const normalized = entry.entryName.replaceAll("\\", "/");
   if (
@@ -32,22 +33,26 @@ for (const entry of archive.getEntries()) {
   ) {
     throw new Error(`Unsafe ZIP path: ${entry.entryName}`);
   }
-  if (entry.isDirectory) {
-    continue;
-  }
   const key = normalized.toLowerCase();
-  if (files.has(key)) {
+  if (seenPaths.has(key)) {
     throw new Error(`Duplicate ZIP path: ${normalized}`);
   }
-  if (!allowedPath(key)) {
-    throw new Error(`Unexpected companion package file: ${normalized}`);
-  }
+  seenPaths.add(key);
   if (
     /UnityDebuggerPure\.exe|Mono\.Debugging|Mono\.Debugger/i.test(normalized) ||
     /(?:^|\/)(?:adapter|vendor)(?:\/|$)/i.test(normalized) ||
     /unitycommunitydebug|vscode-mono-debug|debugger-libs|nrefactory/i.test(normalized)
   ) {
     throw new Error(`Forbidden debugger runtime path: ${normalized}`);
+  }
+  if (entry.isDirectory) {
+    if (!allowedDirectory(key)) {
+      throw new Error(`Unexpected companion package directory: ${normalized}`);
+    }
+    continue;
+  }
+  if (!allowedPath(key)) {
+    throw new Error(`Unexpected companion package file: ${normalized}`);
   }
   files.set(key, { path: normalized, bytes: entry.getData() });
 }
@@ -133,6 +138,13 @@ function allowedPath(filePath) {
     "extension/dist/extension.cjs",
     "extension/dist/mcp-bridge.exe",
   ]).has(filePath);
+}
+
+function allowedDirectory(directoryPath) {
+  return new Set([
+    "extension/",
+    "extension/dist/",
+  ]).has(directoryPath);
 }
 
 function verifyAmd64Pe(bytes) {

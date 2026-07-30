@@ -17,6 +17,7 @@ const inventoryPath = path.join(
   "mcp-extension",
   "runtime-inventory.json",
 );
+const verifierPath = path.join(repositoryRoot, "scripts", "verify-mcp-vsix.mjs");
 
 test("companion SEA and VSIX satisfy the isolated production contract", {
   timeout: 90_000,
@@ -57,24 +58,7 @@ test("companion SEA and VSIX satisfy the isolated production contract", {
     `Companion packaging failed:\n${packaged.stdout}\n${packaged.stderr}`,
   );
 
-  const archive = new AdmZip(artifactPath);
-  const files = new Map();
-  for (const entry of archive.getEntries()) {
-    const normalized = entry.entryName.replaceAll("\\", "/");
-    assert.equal(
-      normalized.startsWith("/") ||
-        /^[A-Za-z]:/.test(normalized) ||
-        normalized.split("/").includes(".."),
-      false,
-      `Unsafe ZIP path: ${entry.entryName}`,
-    );
-    if (entry.isDirectory) {
-      continue;
-    }
-    const key = normalized.toLowerCase();
-    assert.equal(files.has(key), false, `Duplicate ZIP path: ${normalized}`);
-    files.set(key, { name: normalized, bytes: entry.getData() });
-  }
+  const files = auditArchiveEntries(new AdmZip(artifactPath));
 
   const allowed = new Set([
     "[content_types].xml",
@@ -149,6 +133,122 @@ test("companion SEA and VSIX satisfy the isolated production contract", {
   assert.equal(standalone.stdout, "");
   assert.match(standalone.stderr, /Unity Debugger Pure MCP/);
 });
+
+test("production verifier rejects forbidden directory entries", () => {
+  withTamperedArtifact("forbidden-directory", (archive) => {
+    addDirectory(archive, "extension/Adapter/");
+  }, (tamperedPath) => {
+    const result = runVerifier(tamperedPath);
+    assert.notEqual(result.status, 0, "Production verifier accepted an Adapter directory.");
+    assert.match(result.stderr, /Forbidden debugger runtime path: extension\/Adapter\//);
+  });
+});
+
+test("production verifier rejects case-insensitive duplicate directories", () => {
+  withTamperedArtifact("duplicate-directory", (archive) => {
+    return rebuildWithDirectories(archive, ["extension/dist/", "EXTENSION/DIST/"]);
+  }, (tamperedPath) => {
+    const result = runVerifier(tamperedPath);
+    assert.notEqual(result.status, 0, "Production verifier accepted duplicate directories.");
+    assert.match(result.stderr, /Duplicate ZIP path: EXTENSION\/DIST\//);
+  });
+});
+
+test("independent audit rejects forbidden directory entries", () => {
+  withTamperedArtifact("independent-forbidden-directory", (archive) => {
+    addDirectory(archive, "extension/Adapter/");
+  }, (tamperedPath) => {
+    assert.throws(
+      () => auditArchiveEntries(new AdmZip(tamperedPath)),
+      /Forbidden debugger runtime path: extension\/Adapter\//,
+    );
+  });
+});
+
+test("independent audit rejects case-insensitive duplicate directories", () => {
+  withTamperedArtifact("independent-duplicate-directory", (archive) => {
+    return rebuildWithDirectories(archive, ["extension/dist/", "EXTENSION/DIST/"]);
+  }, (tamperedPath) => {
+    assert.throws(
+      () => auditArchiveEntries(new AdmZip(tamperedPath)),
+      /Duplicate ZIP path: EXTENSION\/DIST\//,
+    );
+  });
+});
+
+function auditArchiveEntries(archive) {
+  const files = new Map();
+  const seenPaths = new Set();
+  for (const entry of archive.getEntries()) {
+    const normalized = entry.entryName.replaceAll("\\", "/");
+    assert.equal(
+      normalized.startsWith("/") ||
+        /^[A-Za-z]:/.test(normalized) ||
+        normalized.split("/").includes(".."),
+      false,
+      `Unsafe ZIP path: ${entry.entryName}`,
+    );
+    const key = normalized.toLowerCase();
+    assert.equal(seenPaths.has(key), false, `Duplicate ZIP path: ${normalized}`);
+    seenPaths.add(key);
+    assert.equal(
+      /UnityDebuggerPure\.exe|Mono\.Debugging|Mono\.Debugger/i.test(normalized) ||
+        /(?:^|\/)(?:adapter|vendor)(?:\/|$)/i.test(normalized) ||
+        /unitycommunitydebug|vscode-mono-debug|debugger-libs|nrefactory/i.test(normalized),
+      false,
+      `Forbidden debugger runtime path: ${normalized}`,
+    );
+    if (entry.isDirectory) {
+      assert.equal(
+        new Set(["extension/", "extension/dist/"]).has(key),
+        true,
+        `Unexpected companion package directory: ${normalized}`,
+      );
+      continue;
+    }
+    files.set(key, { name: normalized, bytes: entry.getData() });
+  }
+  return files;
+}
+
+function withTamperedArtifact(name, mutate, inspect) {
+  const tamperedPath = path.join(repositoryRoot, "dist", `${name}.vsix`);
+  try {
+    const archive = new AdmZip(artifactPath);
+    const mutatedArchive = mutate(archive) ?? archive;
+    mutatedArchive.writeZip(tamperedPath);
+    inspect(tamperedPath);
+  } finally {
+    fs.rmSync(tamperedPath, { force: true });
+  }
+}
+
+function addDirectory(archive, entryName) {
+  archive.addFile(entryName, Buffer.alloc(0));
+  assert.equal(archive.getEntry(entryName).isDirectory, true);
+}
+
+function rebuildWithDirectories(source, directoryNames) {
+  const rebuilt = new AdmZip();
+  for (const entryName of directoryNames) {
+    addDirectory(rebuilt, entryName);
+  }
+  for (const entry of source.getEntries()) {
+    if (!entry.isDirectory) {
+      rebuilt.addFile(entry.entryName, entry.getData(), entry.comment, entry.attr);
+    }
+  }
+  return rebuilt;
+}
+
+function runVerifier(vsixPath) {
+  return spawnSync(process.execPath, [verifierPath, vsixPath], {
+    cwd: repositoryRoot,
+    encoding: "utf8",
+    timeout: 10_000,
+    windowsHide: true,
+  });
+}
 
 async function runCommand(command, args, options) {
   const child = spawn(command, args, {
