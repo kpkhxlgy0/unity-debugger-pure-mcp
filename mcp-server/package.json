@@ -1,0 +1,13 @@
+{
+  "name": "unity-debugger-pure-mcp-server",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "1.30.0",
+    "zod": "4.4.3"
+  },
+  "scripts": {
+    "build": "node esbuild.mjs"
+  }
+}

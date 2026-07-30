@@ -1,0 +1,46 @@
+{
+  "name": "unity-debugger-pure-mcp",
+  "displayName": "Unity Debugger Pure MCP",
+  "description": "MCP companion for Unity Debugger Pure debug sessions in VS Code.",
+  "publisher": "kpk",
+  "version": "0.1.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/kpkhxlgy0/unity-debugger-vscode.git"
+  },
+  "bugs": {
+    "url": "https://github.com/kpkhxlgy0/unity-debugger-vscode/issues"
+  },
+  "homepage": "https://github.com/kpkhxlgy0/unity-debugger-vscode#readme",
+  "license": "MIT",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "vscode": "^1.96.0"
+  },
+  "extensionKind": [
+    "workspace"
+  ],
+  "os": [
+    "win32"
+  ],
+  "main": "./dist/extension.cjs",
+  "activationEvents": [],
+  "extensionDependencies": [
+    "kpk.unity-debugger-pure"
+  ],
+  "contributes": {
+    "mcpServerDefinitionProviders": [
+      {
+        "id": "unity-debugger-pure-mcp.server",
+        "label": "Unity Debugger Pure MCP"
+      }
+    ]
+  },
+  "scripts": {
+    "build": "node esbuild.mjs"
+  },
+  "devDependencies": {
+    "@types/vscode": "1.96.0"
+  }
+}
