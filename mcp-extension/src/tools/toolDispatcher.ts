@@ -7,6 +7,19 @@ import type {
   OwnedBreakpoint,
 } from "../debug/breakpointRegistry.js";
 import type { SessionCommandQueue } from "../debug/commandQueue.js";
+import {
+  DapGateway,
+  type DapEvaluation,
+  type DapScope,
+  type DapStackFrame,
+  type DapThread,
+  type DapVariable,
+} from "../debug/dapGateway.js";
+import type {
+  EventBuffer,
+  NormalizedEventKind,
+} from "../debug/eventBuffer.js";
+import { ReferenceStore } from "../debug/referenceStore.js";
 import type {
   SessionRegistry,
   SessionSelection,
@@ -22,21 +35,43 @@ import {
   cancelledError,
   noTargetError,
   notAttachedError,
+  notStoppedError,
+  reloadingError,
   sanitizedToolError,
+  sideEffectsNotAllowedError,
+  staleReferenceError,
   targetWorkspaceNotAllowedError,
   workspaceUntrustedError,
 } from "./errors.js";
 import {
   ADD_BREAKPOINT_INPUT_SCHEMA,
   ATTACH_INPUT_SCHEMA,
+  CONTINUE_INPUT_SCHEMA,
   DISCONNECT_INPUT_SCHEMA,
+  EVALUATE_EXPLICIT_INPUT_SCHEMA,
+  EVALUATE_SAFE_INPUT_SCHEMA,
   LIST_BREAKPOINTS_INPUT_SCHEMA,
   LIST_TARGETS_INPUT_SCHEMA,
+  PAUSE_INPUT_SCHEMA,
   REMOVE_BREAKPOINT_INPUT_SCHEMA,
+  SCOPES_INPUT_SCHEMA,
   SET_EXCEPTION_BREAKPOINTS_INPUT_SCHEMA,
+  SNAPSHOT_INPUT_SCHEMA,
+  STACK_TRACE_INPUT_SCHEMA,
   STATUS_INPUT_SCHEMA,
+  STEP_INPUT_SCHEMA,
+  THREADS_INPUT_SCHEMA,
+  VARIABLES_INPUT_SCHEMA,
+  WAIT_FOR_EVENT_INPUT_SCHEMA,
   type AddBreakpointInput,
+  type EvaluateExplicitInput,
+  type EvaluateSafeInput,
   type ExceptionBreakpointMode,
+  type ScopesInput,
+  type StackTraceInput,
+  type StepInput,
+  type VariablesInput,
+  type WaitForEventInput,
 } from "./schemas.js";
 
 const DEFAULT_CLIENT_ID = "default";
@@ -53,6 +88,21 @@ interface ClientState {
   selectionRef?: string;
   targets?: TargetCapabilities;
   targetOperation?: object;
+}
+
+interface ObservedSessionState {
+  readonly phase: DebugSessionState["phase"];
+  readonly stopGeneration: number;
+}
+
+interface ControlTransition extends ObservedSessionState {
+  readonly token: object;
+}
+
+interface StoppedContext {
+  readonly selection: SessionSelection;
+  readonly session: vscode.DebugSession;
+  readonly state: DebugSessionState;
 }
 
 export interface ToolDependency {
@@ -90,6 +140,9 @@ export interface ToolDispatcherOptions {
   readonly stateForSession: (
     session: vscode.DebugSession,
   ) => DebugSessionState | undefined;
+  readonly references?: ReferenceStore;
+  readonly dap?: DapGateway;
+  readonly eventsForSession?: (sessionRef: string) => EventBuffer | undefined;
   readonly now?: () => number;
 }
 
@@ -116,8 +169,13 @@ export class ToolDispatcher {
   readonly #stateForSession: (
     session: vscode.DebugSession,
   ) => DebugSessionState | undefined;
+  readonly #references: ReferenceStore;
+  readonly #dap: DapGateway;
+  readonly #eventsForSession: (sessionRef: string) => EventBuffer | undefined;
   readonly #now: () => number;
   readonly #clients = new Map<string, ClientState>();
+  readonly #observedStates = new Map<string, ObservedSessionState>();
+  readonly #controlTransitions = new Map<string, ControlTransition>();
 
   public constructor(options: ToolDispatcherOptions) {
     this.#dependency = options.dependency;
@@ -127,6 +185,9 @@ export class ToolDispatcher {
     this.#workspace = options.workspace;
     this.#debug = options.debug;
     this.#stateForSession = options.stateForSession;
+    this.#references = options.references ?? new ReferenceStore();
+    this.#dap = options.dap ?? new DapGateway();
+    this.#eventsForSession = options.eventsForSession ?? (() => undefined);
     this.#now = options.now ?? Date.now;
   }
 
@@ -187,6 +248,74 @@ export class ToolDispatcher {
             clientId,
             signal,
           );
+        case "unity_debug_threads":
+          return await this.#threads(
+            THREADS_INPUT_SCHEMA.parse(input),
+            clientId,
+            signal,
+          );
+        case "unity_debug_stack_trace":
+          return await this.#stackTrace(
+            STACK_TRACE_INPUT_SCHEMA.parse(input),
+            clientId,
+            signal,
+          );
+        case "unity_debug_scopes":
+          return await this.#scopes(
+            SCOPES_INPUT_SCHEMA.parse(input),
+            clientId,
+            signal,
+          );
+        case "unity_debug_variables":
+          return await this.#variables(
+            VARIABLES_INPUT_SCHEMA.parse(input),
+            clientId,
+            signal,
+          );
+        case "unity_debug_snapshot":
+          return await this.#snapshot(
+            SNAPSHOT_INPUT_SCHEMA.parse(input),
+            clientId,
+            signal,
+          );
+        case "unity_debug_evaluate_safe":
+          return await this.#evaluate(
+            EVALUATE_SAFE_INPUT_SCHEMA.parse(input),
+            false,
+            clientId,
+            signal,
+          );
+        case "unity_debug_evaluate_explicit":
+          assertExplicitConsent(input);
+          return await this.#evaluate(
+            EVALUATE_EXPLICIT_INPUT_SCHEMA.parse(input),
+            true,
+            clientId,
+            signal,
+          );
+        case "unity_debug_pause":
+          return await this.#pause(
+            PAUSE_INPUT_SCHEMA.parse(input),
+            clientId,
+            signal,
+          );
+        case "unity_debug_continue":
+          return await this.#resume(
+            CONTINUE_INPUT_SCHEMA.parse(input),
+            "continue",
+            clientId,
+            signal,
+          );
+        case "unity_debug_step": {
+          const parsed = STEP_INPUT_SCHEMA.parse(input);
+          return await this.#resume(parsed, parsed.kind, clientId, signal);
+        }
+        case "unity_debug_wait_for_event":
+          return await this.#waitForEvent(
+            WAIT_FOR_EVENT_INPUT_SCHEMA.parse(input),
+            clientId,
+            signal,
+          );
         default:
           throw new Error("Tool implementation is not available.");
       }
@@ -203,6 +332,19 @@ export class ToolDispatcher {
       state.targets = undefined;
       state.targetOperation = undefined;
       this.#clients.delete(clientId);
+    }
+  }
+
+  /** Composition hook for tracker state events and session removal. */
+  public onSessionStateChanged(sessionRef: string): void {
+    try {
+      const selection = this.#sessions.select(sessionRef);
+      const session = this.#sessions.resolveDebugSession(selection);
+      this.#syncState(selection.sessionRef, this.#currentState(session));
+    } catch {
+      this.#references.invalidate(sessionRef);
+      this.#observedStates.delete(sessionRef);
+      this.#controlTransitions.delete(sessionRef);
     }
   }
 
@@ -431,6 +573,663 @@ export class ToolDispatcher {
     });
   }
 
+  async #threads(
+    input: Readonly<{ sessionRef?: string }>,
+    clientId: string,
+    signal?: AbortSignal,
+  ): Promise<unknown> {
+    const client = this.#clientState(clientId);
+    this.#assertRequestAuthorized(clientId, client, signal);
+    const selection = this.#trackedSelection(input.sessionRef, clientId);
+    return this.#queue.read(selection.sessionRef, async () => {
+      this.#assertRequestAuthorized(clientId, client, signal);
+      const context = this.#stoppedContext(selection.sessionRef);
+      const threads = await this.#dap.threads(context.session);
+      this.#assertRequestAuthorized(clientId, client, signal);
+      this.#recheckStopped(context);
+      return Object.freeze({
+        sessionRef: selection.sessionRef,
+        stopGeneration: context.state.stopGeneration,
+        threads: Object.freeze(threads.map((thread) => this.#threadView(
+          selection.sessionRef,
+          context.state.stopGeneration,
+          thread,
+        ))),
+      });
+    });
+  }
+
+  async #stackTrace(
+    input: StackTraceInput,
+    clientId: string,
+    signal?: AbortSignal,
+  ): Promise<unknown> {
+    const client = this.#clientState(clientId);
+    this.#assertRequestAuthorized(clientId, client, signal);
+    const selection = this.#trackedSelection(input.sessionRef, clientId);
+    return this.#queue.read(selection.sessionRef, async () => {
+      this.#assertRequestAuthorized(clientId, client, signal);
+      const context = this.#stoppedContext(selection.sessionRef);
+      const threadId = this.#references.resolve<number>(
+        input.threadRef,
+        selection.sessionRef,
+        context.state.stopGeneration,
+        "thread",
+      );
+      const stack = await this.#dap.stackTrace(
+        context.session,
+        threadId,
+        input.startFrame,
+        input.levels,
+      );
+      this.#assertRequestAuthorized(clientId, client, signal);
+      this.#recheckStopped(context);
+      const frames = stack.stackFrames.slice(0, input.levels);
+      return Object.freeze({
+        sessionRef: selection.sessionRef,
+        stopGeneration: context.state.stopGeneration,
+        totalFrames: stack.totalFrames ?? frames.length,
+        frames: Object.freeze(frames.map((frame) => this.#frameView(
+          selection.sessionRef,
+          context.state.stopGeneration,
+          frame,
+        ))),
+      });
+    });
+  }
+
+  async #scopes(
+    input: ScopesInput,
+    clientId: string,
+    signal?: AbortSignal,
+  ): Promise<unknown> {
+    const client = this.#clientState(clientId);
+    this.#assertRequestAuthorized(clientId, client, signal);
+    const selection = this.#trackedSelection(input.sessionRef, clientId);
+    return this.#queue.read(selection.sessionRef, async () => {
+      this.#assertRequestAuthorized(clientId, client, signal);
+      const context = this.#stoppedContext(selection.sessionRef);
+      const frameId = this.#references.resolve<number>(
+        input.frameRef,
+        selection.sessionRef,
+        context.state.stopGeneration,
+        "frame",
+      );
+      const scopes = await this.#dap.scopes(context.session, frameId);
+      this.#assertRequestAuthorized(clientId, client, signal);
+      this.#recheckStopped(context);
+      return Object.freeze({
+        sessionRef: selection.sessionRef,
+        stopGeneration: context.state.stopGeneration,
+        scopes: Object.freeze(scopes.map((scope) => this.#scopeView(
+          selection.sessionRef,
+          context.state.stopGeneration,
+          scope,
+        ))),
+      });
+    });
+  }
+
+  async #variables(
+    input: VariablesInput,
+    clientId: string,
+    signal?: AbortSignal,
+  ): Promise<unknown> {
+    const client = this.#clientState(clientId);
+    this.#assertRequestAuthorized(clientId, client, signal);
+    const selection = this.#trackedSelection(input.sessionRef, clientId);
+    return this.#queue.read(selection.sessionRef, async () => {
+      this.#assertRequestAuthorized(clientId, client, signal);
+      const context = this.#stoppedContext(selection.sessionRef);
+      const variablesReference = this.#resolveVariablesReference(
+        input.variablesRef,
+        selection.sessionRef,
+        context.state.stopGeneration,
+      );
+      const variables = await this.#dap.variables(
+        context.session,
+        variablesReference,
+        input.start,
+        input.count,
+      );
+      this.#assertRequestAuthorized(clientId, client, signal);
+      this.#recheckStopped(context);
+      return Object.freeze({
+        sessionRef: selection.sessionRef,
+        stopGeneration: context.state.stopGeneration,
+        variables: Object.freeze(variables.slice(0, input.count).map((variable) =>
+          this.#variableView(
+            selection.sessionRef,
+            context.state.stopGeneration,
+            variable,
+          )
+        )),
+      });
+    });
+  }
+
+  async #snapshot(
+    input: Readonly<{ sessionRef?: string }>,
+    clientId: string,
+    signal?: AbortSignal,
+  ): Promise<unknown> {
+    const client = this.#clientState(clientId);
+    this.#assertRequestAuthorized(clientId, client, signal);
+    const selection = this.#trackedSelection(input.sessionRef, clientId);
+    return this.#queue.read(selection.sessionRef, async () => {
+      this.#assertRequestAuthorized(clientId, client, signal);
+      const context = this.#stoppedContext(selection.sessionRef);
+      const threads = await this.#dap.threads(context.session);
+      this.#afterInspectionAwait(context, clientId, client, signal);
+      const selectedThread = selectStoppedThread(threads, context.state.threadId);
+      let frames: readonly DapStackFrame[] = [];
+      let scopes: readonly DapScope[] = [];
+      let variables: readonly DapVariable[] = [];
+      if (selectedThread !== undefined) {
+        const stack = await this.#dap.stackTrace(
+          context.session,
+          selectedThread.id,
+          0,
+          20,
+        );
+        this.#afterInspectionAwait(context, clientId, client, signal);
+        frames = stack.stackFrames.slice(0, 20);
+      }
+      if (frames[0] !== undefined) {
+        scopes = await this.#dap.scopes(context.session, frames[0].id);
+        this.#afterInspectionAwait(context, clientId, client, signal);
+      }
+      const firstScope = scopes.find((scope) => !scope.expensive);
+      if (firstScope !== undefined) {
+        variables = await this.#dap.variables(
+          context.session,
+          firstScope.variablesReference,
+          0,
+          100,
+        );
+        this.#afterInspectionAwait(context, clientId, client, signal);
+        variables = variables.slice(0, 100);
+      }
+      // No opaque reference is allocated until every requested DAP operation
+      // has succeeded and the generation has passed its final check.
+      this.#assertRequestAuthorized(clientId, client, signal);
+      this.#recheckStopped(context);
+      return Object.freeze({
+        sessionRef: selection.sessionRef,
+        stopGeneration: context.state.stopGeneration,
+        reason: context.state.reason,
+        thread: selectedThread === undefined
+          ? null
+          : this.#threadView(
+            selection.sessionRef,
+            context.state.stopGeneration,
+            selectedThread,
+          ),
+        frames: Object.freeze(frames.map((frame) => this.#frameView(
+          selection.sessionRef,
+          context.state.stopGeneration,
+          frame,
+        ))),
+        scopes: Object.freeze(scopes.map((scope) => this.#scopeView(
+          selection.sessionRef,
+          context.state.stopGeneration,
+          scope,
+        ))),
+        variables: Object.freeze(variables.map((variable) => this.#variableView(
+          selection.sessionRef,
+          context.state.stopGeneration,
+          variable,
+        ))),
+      });
+    });
+  }
+
+  async #evaluate(
+    input: EvaluateSafeInput | EvaluateExplicitInput,
+    explicit: boolean,
+    clientId: string,
+    signal?: AbortSignal,
+  ): Promise<unknown> {
+    const client = this.#clientState(clientId);
+    this.#assertRequestAuthorized(clientId, client, signal);
+    const selection = this.#trackedSelection(input.sessionRef, clientId);
+    const operation = async () => {
+      this.#assertRequestAuthorized(clientId, client, signal);
+      const context = this.#stoppedContext(selection.sessionRef);
+      const frameId = this.#references.resolve<number>(
+        input.frameRef,
+        selection.sessionRef,
+        context.state.stopGeneration,
+        "frame",
+      );
+      const evaluation = explicit
+        ? await this.#dap.evaluateExplicit(context.session, frameId, input.expression)
+        : await this.#dap.evaluateSafe(context.session, frameId, input.expression);
+      this.#assertRequestAuthorized(clientId, client, signal);
+      this.#recheckStopped(context);
+      return this.#evaluationView(
+        selection.sessionRef,
+        context.state.stopGeneration,
+        evaluation,
+      );
+    };
+    return explicit
+      ? this.#queue.write(selection.sessionRef, operation)
+      : this.#queue.read(selection.sessionRef, operation);
+  }
+
+  async #pause(
+    input: Readonly<{ sessionRef?: string }>,
+    clientId: string,
+    signal?: AbortSignal,
+  ): Promise<unknown> {
+    const client = this.#clientState(clientId);
+    this.#assertRequestAuthorized(clientId, client, signal);
+    const selection = this.#trackedSelection(input.sessionRef, clientId);
+    return this.#queue.write(selection.sessionRef, async () => {
+      this.#assertRequestAuthorized(clientId, client, signal);
+      const session = this.#sessions.resolveDebugSession(
+        this.#sessions.selectForInspection(selection.sessionRef),
+      );
+      const state = this.#currentState(session);
+      this.#syncState(selection.sessionRef, state);
+      this.#assertControlPhase(selection.sessionRef, state, "running");
+      const threads = await this.#dap.threads(session);
+      this.#assertRequestAuthorized(clientId, client, signal);
+      this.#recheckControlState(selection.sessionRef, session, state, "running");
+      const thread = threads[0];
+      if (thread === undefined) {
+        throw new Error("Debugger did not return a pausable thread.");
+      }
+      const transition = this.#beginControlTransition(selection.sessionRef, state);
+      try {
+        await this.#dap.pause(session, thread.id);
+      } catch (error) {
+        this.#clearFailedTransition(selection.sessionRef, transition);
+        throw error;
+      }
+      this.#assertRequestAuthorized(clientId, client, signal);
+      return Object.freeze({
+        sessionRef: selection.sessionRef,
+        transitioning: true,
+      });
+    });
+  }
+
+  async #resume(
+    input: Readonly<{ sessionRef?: string }>,
+    operation: "continue" | "in" | "over" | "out",
+    clientId: string,
+    signal?: AbortSignal,
+  ): Promise<unknown> {
+    const client = this.#clientState(clientId);
+    this.#assertRequestAuthorized(clientId, client, signal);
+    const selection = this.#trackedSelection(input.sessionRef, clientId);
+    return this.#queue.write(selection.sessionRef, async () => {
+      this.#assertRequestAuthorized(clientId, client, signal);
+      const session = this.#sessions.resolveDebugSession(
+        this.#sessions.selectForInspection(selection.sessionRef),
+      );
+      const state = this.#currentState(session);
+      this.#syncState(selection.sessionRef, state);
+      this.#assertControlPhase(selection.sessionRef, state, "stopped");
+      let threadId = validPositiveHandle(state.threadId) ? state.threadId : undefined;
+      if (threadId === undefined) {
+        const threads = await this.#dap.threads(session);
+        this.#assertRequestAuthorized(clientId, client, signal);
+        this.#recheckControlState(selection.sessionRef, session, state, "stopped");
+        threadId = threads[0]?.id;
+      }
+      if (threadId === undefined) {
+        throw new Error("Debugger did not return a resumable thread.");
+      }
+      this.#assertRequestAuthorized(clientId, client, signal);
+      this.#recheckControlState(selection.sessionRef, session, state, "stopped");
+      const transition = this.#beginControlTransition(selection.sessionRef, state);
+      this.#references.invalidate(selection.sessionRef);
+      try {
+        if (operation === "continue") {
+          await this.#dap.continue(session, threadId);
+        } else if (operation === "in") {
+          await this.#dap.stepIn(session, threadId);
+        } else if (operation === "over") {
+          await this.#dap.next(session, threadId);
+        } else {
+          await this.#dap.stepOut(session, threadId);
+        }
+      } catch (error) {
+        this.#clearFailedTransition(selection.sessionRef, transition);
+        throw error;
+      }
+      this.#assertRequestAuthorized(clientId, client, signal);
+      const result: { sessionRef: string; transitioning: true; kind?: string } = {
+        sessionRef: selection.sessionRef,
+        transitioning: true,
+      };
+      if (operation !== "continue") {
+        result.kind = operation;
+      }
+      return Object.freeze(result);
+    });
+  }
+
+  async #waitForEvent(
+    input: WaitForEventInput,
+    clientId: string,
+    signal?: AbortSignal,
+  ): Promise<unknown> {
+    const client = this.#clientState(clientId);
+    this.#assertRequestAuthorized(clientId, client, signal);
+    const selection = this.#trackedSelection(input.sessionRef, clientId);
+    const session = this.#sessions.resolveDebugSession(selection);
+    this.#syncState(selection.sessionRef, this.#currentState(session));
+    const buffer = this.#eventsForSession(selection.sessionRef);
+    if (buffer === undefined) {
+      throw notAttachedError();
+    }
+    const event = await buffer.waitFor(
+      input.afterSequence,
+      input.kinds as readonly NormalizedEventKind[] | undefined,
+      input.timeoutMs,
+      signal,
+    );
+    this.#assertRequestAuthorized(clientId, client, signal);
+    this.#sessions.resolveDebugSession(this.#sessions.selectForInspection(selection.sessionRef));
+    return Object.freeze({
+      sessionRef: selection.sessionRef,
+      event,
+    });
+  }
+
+  #trackedSelection(
+    explicitSessionRef: string | undefined,
+    clientId: string,
+  ): SessionSelection {
+    const selected = this.#requiredSelection(explicitSessionRef, clientId);
+    return this.#sessions.selectForInspection(selected.sessionRef);
+  }
+
+  #currentState(session: vscode.DebugSession): DebugSessionState {
+    return this.#stateForSession(session) ?? Object.freeze({
+      phase: "starting",
+      stopGeneration: 0,
+      eventSequence: 0,
+    });
+  }
+
+  #syncState(sessionRef: string, state: DebugSessionState): void {
+    const previous = this.#observedStates.get(sessionRef);
+    if (
+      previous !== undefined &&
+      (previous.phase !== state.phase ||
+        previous.stopGeneration !== state.stopGeneration)
+    ) {
+      this.#references.invalidate(sessionRef);
+    }
+    this.#observedStates.set(sessionRef, Object.freeze({
+      phase: state.phase,
+      stopGeneration: state.stopGeneration,
+    }));
+    const transition = this.#controlTransitions.get(sessionRef);
+    if (
+      transition !== undefined &&
+      (transition.phase !== state.phase ||
+        transition.stopGeneration !== state.stopGeneration)
+    ) {
+      this.#controlTransitions.delete(sessionRef);
+    }
+  }
+
+  #stoppedContext(sessionRef: string): StoppedContext {
+    const selection = this.#sessions.selectForInspection(sessionRef);
+    const session = this.#sessions.resolveDebugSession(selection);
+    const state = this.#currentState(session);
+    this.#syncState(sessionRef, state);
+    this.#assertInspectableState(sessionRef, state);
+    return Object.freeze({ selection, session, state });
+  }
+
+  #assertInspectableState(sessionRef: string, state: DebugSessionState): void {
+    if (state.phase === "terminated") {
+      throw notAttachedError();
+    }
+    if (state.phase === "reloading") {
+      throw reloadingError();
+    }
+    if (
+      state.phase !== "stopped" ||
+      this.#controlTransitions.has(sessionRef)
+    ) {
+      throw notStoppedError();
+    }
+  }
+
+  #recheckStopped(expected: StoppedContext): void {
+    let currentSession: vscode.DebugSession;
+    try {
+      const currentSelection = this.#sessions.selectForInspection(
+        expected.selection.sessionRef,
+      );
+      currentSession = this.#sessions.resolveDebugSession(currentSelection);
+    } catch {
+      this.#references.invalidate(expected.selection.sessionRef);
+      throw staleReferenceError();
+    }
+    const currentState = this.#currentState(currentSession);
+    this.#syncState(expected.selection.sessionRef, currentState);
+    if (
+      currentSession !== expected.session ||
+      currentState.phase !== expected.state.phase ||
+      currentState.stopGeneration !== expected.state.stopGeneration ||
+      this.#controlTransitions.has(expected.selection.sessionRef)
+    ) {
+      this.#references.invalidate(expected.selection.sessionRef);
+      throw staleReferenceError();
+    }
+    this.#assertInspectableState(expected.selection.sessionRef, currentState);
+  }
+
+  #afterInspectionAwait(
+    context: StoppedContext,
+    clientId: string,
+    client: ClientState,
+    signal?: AbortSignal,
+  ): void {
+    this.#assertRequestAuthorized(clientId, client, signal);
+    this.#recheckStopped(context);
+  }
+
+  #assertControlPhase(
+    sessionRef: string,
+    state: DebugSessionState,
+    expected: "running" | "stopped",
+  ): void {
+    if (state.phase === "terminated") {
+      throw notAttachedError();
+    }
+    if (state.phase === "reloading") {
+      throw reloadingError();
+    }
+    if (state.phase !== expected || this.#controlTransitions.has(sessionRef)) {
+      throw notStoppedError();
+    }
+  }
+
+  #recheckControlState(
+    sessionRef: string,
+    session: vscode.DebugSession,
+    expected: DebugSessionState,
+    phase: "running" | "stopped",
+  ): void {
+    const currentSelection = this.#sessions.selectForInspection(sessionRef);
+    const currentSession = this.#sessions.resolveDebugSession(currentSelection);
+    const current = this.#currentState(currentSession);
+    this.#syncState(sessionRef, current);
+    if (
+      currentSession !== session ||
+      current.phase !== expected.phase ||
+      current.stopGeneration !== expected.stopGeneration
+    ) {
+      throw staleReferenceError();
+    }
+    this.#assertControlPhase(sessionRef, current, phase);
+  }
+
+  #beginControlTransition(
+    sessionRef: string,
+    state: DebugSessionState,
+  ): ControlTransition {
+    const transition = Object.freeze({
+      phase: state.phase,
+      stopGeneration: state.stopGeneration,
+      token: {},
+    });
+    this.#controlTransitions.set(sessionRef, transition);
+    return transition;
+  }
+
+  #clearFailedTransition(
+    sessionRef: string,
+    transition: ControlTransition,
+  ): void {
+    if (this.#controlTransitions.get(sessionRef) === transition) {
+      this.#controlTransitions.delete(sessionRef);
+    }
+  }
+
+  #resolveVariablesReference(
+    variablesRef: string,
+    sessionRef: string,
+    generation: number,
+  ): number {
+    try {
+      return this.#references.resolve<number>(
+        variablesRef,
+        sessionRef,
+        generation,
+        "scope",
+      );
+    } catch {
+      return this.#references.resolve<number>(
+        variablesRef,
+        sessionRef,
+        generation,
+        "variable",
+      );
+    }
+  }
+
+  #threadView(
+    sessionRef: string,
+    generation: number,
+    thread: DapThread,
+  ): Readonly<Record<string, unknown>> {
+    const name = truncateDisplay(thread.name);
+    return Object.freeze({
+      threadRef: this.#references.create(sessionRef, generation, "thread", thread.id),
+      name: name.value,
+      ...(name.truncated ? { truncated: true } : {}),
+    });
+  }
+
+  #frameView(
+    sessionRef: string,
+    generation: number,
+    frame: DapStackFrame,
+  ): Readonly<Record<string, unknown>> {
+    const name = truncateDisplay(frame.name);
+    const result: Record<string, unknown> = {
+      frameRef: this.#references.create(sessionRef, generation, "frame", frame.id),
+      name: name.value,
+      line: frame.line,
+    };
+    if (frame.column !== undefined) {
+      result.column = frame.column;
+    }
+    if (frame.source?.name !== undefined) {
+      result.sourceName = truncateDisplay(frame.source.name).value;
+    }
+    if (name.truncated) {
+      result.truncated = true;
+    }
+    return Object.freeze(result);
+  }
+
+  #scopeView(
+    sessionRef: string,
+    generation: number,
+    scope: DapScope,
+  ): Readonly<Record<string, unknown>> {
+    const name = truncateDisplay(scope.name);
+    return Object.freeze({
+      name: name.value,
+      expensive: scope.expensive,
+      variablesRef: this.#references.create(
+        sessionRef,
+        generation,
+        "scope",
+        scope.variablesReference,
+      ),
+      ...(name.truncated ? { truncated: true } : {}),
+    });
+  }
+
+  #variableView(
+    sessionRef: string,
+    generation: number,
+    variable: DapVariable,
+  ): Readonly<Record<string, unknown>> {
+    const name = truncateDisplay(variable.name);
+    const value = truncateDisplay(variable.value);
+    const result: Record<string, unknown> = {
+      name: name.value,
+      value: value.value,
+    };
+    if (variable.type !== undefined) {
+      result.type = truncateDisplay(variable.type).value;
+    }
+    if (variable.variablesReference > 0) {
+      result.variablesRef = this.#references.create(
+        sessionRef,
+        generation,
+        "variable",
+        variable.variablesReference,
+      );
+    }
+    if (name.truncated || value.truncated) {
+      result.truncated = true;
+    }
+    return Object.freeze(result);
+  }
+
+  #evaluationView(
+    sessionRef: string,
+    generation: number,
+    evaluation: DapEvaluation,
+  ): Readonly<Record<string, unknown>> {
+    const display = truncateDisplay(evaluation.result);
+    const result: Record<string, unknown> = {
+      sessionRef,
+      stopGeneration: generation,
+      result: display.value,
+    };
+    if (evaluation.type !== undefined) {
+      result.type = truncateDisplay(evaluation.type).value;
+    }
+    if (evaluation.variablesReference > 0) {
+      result.variablesRef = this.#references.create(
+        sessionRef,
+        generation,
+        "variable",
+        evaluation.variablesReference,
+      );
+    }
+    if (display.truncated) {
+      result.truncated = true;
+    }
+    return Object.freeze(result);
+  }
+
   #requiredSelection(
     explicitSessionRef: string | undefined,
     clientId: string,
@@ -476,14 +1275,14 @@ export class ToolDispatcher {
 
   #attachedStatus(selection: SessionSelection): AttachedStatus {
     const liveSession = this.#sessions.resolveDebugSession(selection);
-    const state = this.#stateForSession(liveSession) ?? {
-      phase: "starting" as const,
-      stopGeneration: 0,
-      eventSequence: 0,
-    };
+    const state = this.#currentState(liveSession);
+    this.#syncState(selection.sessionRef, state);
+    const phase = this.#controlTransitions.has(selection.sessionRef)
+      ? "running" as const
+      : state.phase;
     return Object.freeze({
       session: selection,
-      state: state.phase,
+      state: phase,
       stopGeneration: state.stopGeneration,
       eventSequence: state.eventSequence,
     });
@@ -575,5 +1374,51 @@ function safeTargetView(
     workspaceRoot,
     projectVersion: target.projectVersion,
     source: target.source,
+  });
+}
+
+function assertExplicitConsent(input: unknown): void {
+  if (
+    typeof input !== "object" ||
+    input === null ||
+    Array.isArray(input) ||
+    (input as Record<string, unknown>).allowSideEffects !== true
+  ) {
+    throw sideEffectsNotAllowedError();
+  }
+}
+
+function selectStoppedThread(
+  threads: readonly DapThread[],
+  stoppedThreadId: number | undefined,
+): DapThread | undefined {
+  if (validPositiveHandle(stoppedThreadId)) {
+    const selected = threads.find((thread) => thread.id === stoppedThreadId);
+    if (selected !== undefined) {
+      return selected;
+    }
+  }
+  return threads[0];
+}
+
+function validPositiveHandle(value: unknown): value is number {
+  return Number.isSafeInteger(value) && (value as number) > 0;
+}
+
+function truncateDisplay(value: string): Readonly<{
+  value: string;
+  truncated: boolean;
+}> {
+  if (value.length <= 4_096) {
+    return Object.freeze({ value, truncated: false });
+  }
+  let end = 4_096;
+  const last = value.charCodeAt(end - 1);
+  if (last >= 0xd800 && last <= 0xdbff) {
+    end -= 1;
+  }
+  return Object.freeze({
+    value: value.slice(0, end),
+    truncated: true,
   });
 }

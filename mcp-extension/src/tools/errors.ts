@@ -141,6 +141,36 @@ export function staleReferenceError(): StructuredToolError {
   });
 }
 
+export function notStoppedError(): StructuredToolError {
+  return Object.freeze({
+    code: "NOT_STOPPED",
+    message: "The debugger session is not stopped at an inspectable generation.",
+    retryable: true,
+    currentState: "not_stopped",
+    action: "Wait for a stopped event, then request fresh debugger data.",
+  });
+}
+
+export function reloadingError(): StructuredToolError {
+  return Object.freeze({
+    code: "RELOADING",
+    message: "The Unity domain is reloading.",
+    retryable: true,
+    currentState: "reloading",
+    action: "Wait for reload completion before retrying the request.",
+  });
+}
+
+export function sideEffectsNotAllowedError(): StructuredToolError {
+  return Object.freeze({
+    code: "SIDE_EFFECTS_NOT_ALLOWED",
+    message: "Explicit evaluation requires side-effect consent.",
+    retryable: false,
+    currentState: "unchanged",
+    action: "Set allowSideEffects to literal true only if target execution is intended.",
+  });
+}
+
 export function notAttachedError(): StructuredToolError {
   return Object.freeze({
     code: "NOT_ATTACHED",
