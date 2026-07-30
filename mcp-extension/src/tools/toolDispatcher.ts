@@ -216,7 +216,7 @@ export class ToolDispatcher {
     client.targetOperation = operation;
     const issuedAt = this.#now();
     const requestedRoots = this.#workspaceRoots();
-    const requestedRootKeys = new Set(requestedRoots.map(canonicalPathKey));
+    const requestedRootMap = workspaceRootMap(requestedRoots);
     const discovered = await this.#dependency.discoverTargets(requestedRoots);
     if (
       signal?.aborted === true ||
@@ -228,18 +228,19 @@ export class ToolDispatcher {
     if (!this.#workspace.isTrusted()) {
       throw workspaceUntrustedError();
     }
-    const freshRootKeys = new Set(this.#workspaceRoots().map(canonicalPathKey));
+    const freshRootMap = workspaceRootMap(this.#workspaceRoots());
     const capabilities = new Map<string, PublicEditorTarget>();
     const targets: PublicEditorTarget[] = [];
     for (const target of discovered) {
       const workspaceRootKey = canonicalPathKey(target.workspaceRoot);
-      if (
-        !requestedRootKeys.has(workspaceRootKey) ||
-        !freshRootKeys.has(workspaceRootKey)
-      ) {
+      if (!requestedRootMap.has(workspaceRootKey)) {
         continue;
       }
-      const safeTarget = safeTargetView(target);
+      const currentWorkspaceRoot = freshRootMap.get(workspaceRootKey);
+      if (currentWorkspaceRoot === undefined) {
+        continue;
+      }
+      const safeTarget = safeTargetView(target, currentWorkspaceRoot);
       if (capabilities.has(safeTarget.targetId)) {
         throw new Error("Debugger dependency returned duplicate target references.");
       }
@@ -298,14 +299,11 @@ export class ToolDispatcher {
       throw noTargetError();
     }
 
-    const currentRootKeys = new Set(
-      this.#workspaceRoots().map((workspaceRoot) => canonicalPathKey(workspaceRoot)),
+    const currentWorkspaceRoot = this.#currentTargetWorkspaceRoot(
+      target.workspaceRoot,
     );
-    if (!currentRootKeys.has(canonicalPathKey(target.workspaceRoot))) {
-      throw targetWorkspaceNotAllowedError();
-    }
 
-    const matching = this.#matchingTrackedSessions(target.workspaceRoot);
+    const matching = this.#matchingTrackedSessions(currentWorkspaceRoot);
     if (matching.length > 1) {
       throw ambiguousTargetError();
     }
@@ -319,6 +317,7 @@ export class ToolDispatcher {
       this.#assertRequestAuthorized(clientId, client, signal);
       const started = await this.#dependency.startAttach(targetId);
       this.#assertRequestAuthorized(clientId, client, signal);
+      this.#currentTargetWorkspaceRoot(target.workspaceRoot);
       const registered = this.#sessions.findBySessionId(started.sessionId);
       if (registered === undefined || !registered.tracked) {
         throw attachFailedError();
@@ -502,6 +501,16 @@ export class ToolDispatcher {
     return Object.freeze([...roots.values()]);
   }
 
+  #currentTargetWorkspaceRoot(targetWorkspaceRoot: string): string {
+    const current = workspaceRootMap(this.#workspaceRoots()).get(
+      canonicalPathKey(targetWorkspaceRoot),
+    );
+    if (current === undefined) {
+      throw targetWorkspaceNotAllowedError();
+    }
+    return current;
+  }
+
   #clientState(clientId: string): ClientState {
     let state = this.#clients.get(clientId);
     if (state === undefined) {
@@ -542,12 +551,28 @@ function canonicalPathKey(value: string): string {
   return process.platform === "win32" ? resolved.toLowerCase() : resolved;
 }
 
-function safeTargetView(target: PublicEditorTarget): PublicEditorTarget {
+function workspaceRootMap(
+  workspaceRoots: readonly string[],
+): ReadonlyMap<string, string> {
+  const roots = new Map<string, string>();
+  for (const workspaceRoot of workspaceRoots) {
+    const key = canonicalPathKey(workspaceRoot);
+    if (!roots.has(key)) {
+      roots.set(key, workspaceRoot);
+    }
+  }
+  return roots;
+}
+
+function safeTargetView(
+  target: PublicEditorTarget,
+  workspaceRoot: string,
+): PublicEditorTarget {
   return Object.freeze({
     targetId: target.targetId,
     processId: target.processId,
     projectName: target.projectName,
-    workspaceRoot: target.workspaceRoot,
+    workspaceRoot,
     projectVersion: target.projectVersion,
     source: target.source,
   });

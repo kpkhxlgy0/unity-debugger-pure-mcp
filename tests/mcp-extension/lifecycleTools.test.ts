@@ -202,6 +202,36 @@ describe("ToolDispatcher lifecycle tools", () => {
     expect(startAttach).toHaveBeenCalledOnce();
   });
 
+  it("returns and caches the exact current canonical root instead of a target alias", async () => {
+    const aliasedRoot = "H:\\workspace\\private-looking-segment\\..\\MyGame\\.";
+    const aliasedTarget: PublicEditorTarget = Object.freeze({
+      ...firstTarget,
+      workspaceRoot: aliasedRoot,
+    });
+    const { dispatcher, sessions, startAttach } = harness({
+      roots: [firstRoot],
+      targets: [aliasedTarget],
+    });
+    const live = debugSession("canonical-root-session", firstRoot);
+    const selection = sessions.register(live, true)!;
+
+    const listed = await listTargets(dispatcher) as {
+      readonly targets: readonly PublicEditorTarget[];
+    };
+
+    expect(listed.targets).toEqual([{
+      ...firstTarget,
+      workspaceRoot: firstRoot,
+    }]);
+    expect(JSON.stringify(listed)).not.toContain("private-looking-segment");
+    expect(Object.isFrozen(listed.targets)).toBe(true);
+    expect(Object.isFrozen(listed.targets[0])).toBe(true);
+    await expect(
+      dispatcher.call("unity_debug_attach", { targetId: firstTarget.targetId }, "client-1"),
+    ).resolves.toMatchObject({ session: selection, reused: true });
+    expect(startAttach).not.toHaveBeenCalled();
+  });
+
   it("drops targets whose workspace root is removed while discovery is pending", async () => {
     let finishDiscovery!: (targets: readonly PublicEditorTarget[]) => void;
     const { dispatcher, discoverTargets, startAttach, setRoots } = harness({
@@ -319,6 +349,42 @@ describe("ToolDispatcher lifecycle tools", () => {
       dispatcher.call("unity_debug_attach", { targetId: firstTarget.targetId }, "client-1"),
     ).rejects.toMatchObject({ code: "WORKSPACE_NOT_ALLOWED" });
     expect(startAttach).not.toHaveBeenCalled();
+  });
+
+  it("revalidates the target root after a pending public attach starts a session", async () => {
+    let finishAttach!: (started: { sessionId: string; targetId: string }) => void;
+    const { dispatcher, sessions, startAttach, setRoots } = harness({
+      roots: [firstRoot, secondRoot],
+    });
+    await listTargets(dispatcher);
+    startAttach.mockImplementationOnce(async () =>
+      new Promise<{ sessionId: string; targetId: string }>((resolve) => {
+        finishAttach = resolve;
+      })
+    );
+    const attaching = dispatcher.call(
+      "unity_debug_attach",
+      { targetId: firstTarget.targetId },
+      "client-1",
+    );
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(startAttach).toHaveBeenCalledOnce();
+    setRoots([secondRoot]);
+    const startedSession = debugSession("started-after-root-removal", firstRoot);
+    sessions.register(startedSession, true);
+    finishAttach({
+      sessionId: startedSession.id,
+      targetId: firstTarget.targetId,
+    });
+
+    await expect(attaching).rejects.toMatchObject({ code: "WORKSPACE_NOT_ALLOWED" });
+    await expect(dispatcher.call("unity_debug_status", {}, "client-1")).resolves.toEqual({
+      session: null,
+      state: "not-attached",
+      eventSequence: 0,
+    });
+    expect(sessions.findBySessionId(startedSession.id)).toMatchObject({ tracked: true });
   });
 
   it("does not repopulate target capabilities when disconnect races discovery", async () => {
@@ -447,6 +513,53 @@ describe("ToolDispatcher lifecycle tools", () => {
 
     await expect(first).resolves.toMatchObject({ reused: false });
     expect(startAttach).toHaveBeenCalledOnce();
+  });
+
+  it("serializes distinct same-client targets for one root and leaves deterministic status", async () => {
+    const secondTarget: PublicEditorTarget = Object.freeze({
+      ...firstTarget,
+      targetId: "target-2",
+    });
+    let finishAttach!: (started: { sessionId: string; targetId: string }) => void;
+    const { dispatcher, sessions, startAttach } = harness({
+      targets: [firstTarget, secondTarget],
+    });
+    await listTargets(dispatcher, "client-1");
+    startAttach.mockImplementationOnce(async () =>
+      new Promise<{ sessionId: string; targetId: string }>((resolve) => {
+        finishAttach = resolve;
+      })
+    );
+
+    const first = dispatcher.call(
+      "unity_debug_attach",
+      { targetId: firstTarget.targetId },
+      "client-1",
+    );
+    const second = dispatcher.call(
+      "unity_debug_attach",
+      { targetId: secondTarget.targetId },
+      "client-1",
+    );
+    await Promise.resolve();
+    await Promise.resolve();
+    const startsBeforeRelease = startAttach.mock.calls.length;
+    const startedSession = debugSession("same-client-shared-session", firstRoot);
+    sessions.register(startedSession, true);
+    finishAttach({
+      sessionId: startedSession.id,
+      targetId: firstTarget.targetId,
+    });
+    const [firstResult, secondResult] = await Promise.all([first, second]);
+    const selected = (firstResult as { session: { sessionRef: string } }).session;
+
+    expect(startsBeforeRelease).toBe(1);
+    expect(startAttach).toHaveBeenCalledOnce();
+    expect(firstResult).toMatchObject({ session: selected, reused: false });
+    expect(secondResult).toMatchObject({ session: selected, reused: true });
+    await expect(
+      dispatcher.call("unity_debug_status", {}, "client-1"),
+    ).resolves.toMatchObject({ session: selected, state: "starting" });
   });
 
   it("cancels a second client that disconnects while waiting for the attach gate", async () => {
