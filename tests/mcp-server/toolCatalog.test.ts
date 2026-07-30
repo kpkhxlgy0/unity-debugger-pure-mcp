@@ -20,7 +20,7 @@ const EXPECTED_ANNOTATIONS = Object.freeze({
   unity_debug_list_breakpoints: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, ...OPEN_WORLD_CLOSED },
   unity_debug_add_breakpoint: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, ...OPEN_WORLD_CLOSED },
   unity_debug_remove_breakpoint: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, ...OPEN_WORLD_CLOSED },
-  unity_debug_set_exception_breakpoints: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, ...OPEN_WORLD_CLOSED },
+  unity_debug_set_exception_breakpoints: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, ...OPEN_WORLD_CLOSED },
   unity_debug_threads: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, ...OPEN_WORLD_CLOSED },
   unity_debug_stack_trace: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, ...OPEN_WORLD_CLOSED },
   unity_debug_scopes: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, ...OPEN_WORLD_CLOSED },
@@ -28,7 +28,7 @@ const EXPECTED_ANNOTATIONS = Object.freeze({
   unity_debug_snapshot: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, ...OPEN_WORLD_CLOSED },
   unity_debug_evaluate_safe: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, ...OPEN_WORLD_CLOSED },
   unity_debug_evaluate_explicit: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, ...OPEN_WORLD_CLOSED },
-  unity_debug_pause: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, ...OPEN_WORLD_CLOSED },
+  unity_debug_pause: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, ...OPEN_WORLD_CLOSED },
   unity_debug_continue: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, ...OPEN_WORLD_CLOSED },
   unity_debug_step: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, ...OPEN_WORLD_CLOSED },
   unity_debug_wait_for_event: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, ...OPEN_WORLD_CLOSED },
@@ -295,6 +295,51 @@ describe("Unity debugger MCP tool catalog", () => {
     const snapshotSchema = TOOL_DEFINITIONS.find(({ name }) => name === "unity_debug_snapshot")!.successSchema;
     const { reason: _reason, ...snapshotWithoutReason } = SUCCESS_CASES.unity_debug_snapshot.result;
     expect(snapshotSchema.safeParse(snapshotWithoutReason).success).toBe(false);
+    const attachSchema = TOOL_DEFINITIONS.find(({ name }) => name === "unity_debug_attach")!.successSchema;
+    expect(attachSchema.safeParse({
+      ...SUCCESS_CASES.unity_debug_attach.result,
+      session: { sessionRef: "opaque-session", tracked: false },
+    }).success).toBe(false);
+  });
+
+  it("validates normalized event output by UTF-8 byte length", async () => {
+    const exactBoundary = `${"界".repeat(21_845)}a`;
+    const overBoundary = "界".repeat(21_846);
+    expect(Buffer.byteLength(exactBoundary, "utf8")).toBe(65_536);
+    expect(Buffer.byteLength(overBoundary, "utf8")).toBeGreaterThan(65_536);
+
+    const waitSchema = TOOL_DEFINITIONS.find(({ name }) =>
+      name === "unity_debug_wait_for_event"
+    )!.successSchema;
+    expect(waitSchema.safeParse({
+      ...METADATA,
+      event: { sequence: 5, kind: "output", output: exactBoundary },
+    }).success).toBe(true);
+    expect(waitSchema.safeParse({
+      ...METADATA,
+      event: { sequence: 5, kind: "reload-progress", output: overBoundary },
+    }).success).toBe(false);
+
+    const bridge = {
+      callTool: vi.fn().mockResolvedValue({
+        ...METADATA,
+        event: { sequence: 5, kind: "output", output: overBoundary },
+      }),
+    } satisfies BridgeToolCaller;
+    const { client } = await connect(bridge);
+    await client.listTools();
+
+    const result = await client.callTool({
+      name: "unity_debug_wait_for_event",
+      arguments: { afterSequence: 4 },
+    });
+    const serialized = JSON.stringify(result);
+    expect(bridge.callTool).toHaveBeenCalledTimes(1);
+    expect(result).toMatchObject({
+      isError: true,
+      structuredContent: { code: "DAP_FAILURE" },
+    });
+    expect(serialized).not.toContain("界界界界界界界界");
   });
 
   it("maps BridgeCallError.detail exactly to a structured MCP error", async () => {

@@ -72,6 +72,15 @@ const SESSION_SELECTION_SCHEMA = z.strictObject({
   sessionRef: SESSION_REF_SCHEMA,
   tracked: z.boolean(),
 });
+const TRACKED_SESSION_SELECTION_SCHEMA = z.strictObject({
+  sessionRef: SESSION_REF_SCHEMA,
+  tracked: z.literal(true),
+});
+const EVENT_OUTPUT_SCHEMA = z.string().superRefine((value, context) => {
+  if (Buffer.byteLength(value, "utf8") > MAX_EVENT_OUTPUT_LENGTH) {
+    context.addIssue({ code: "custom", message: "Event output exceeds its byte limit." });
+  }
+});
 
 const TARGET_SCHEMA = z.strictObject({
   targetId: NON_EMPTY_STRING_SCHEMA,
@@ -216,12 +225,12 @@ const EVENT_SCHEMA = z.discriminatedUnion("kind", [
   z.strictObject({
     sequence: POSITIVE_INTEGER_SCHEMA,
     kind: z.literal("reload-progress"),
-    output: z.string().max(MAX_EVENT_OUTPUT_LENGTH),
+    output: EVENT_OUTPUT_SCHEMA,
   }),
   z.strictObject({
     sequence: POSITIVE_INTEGER_SCHEMA,
     kind: z.literal("output"),
-    output: z.string().max(MAX_EVENT_OUTPUT_LENGTH),
+    output: EVENT_OUTPUT_SCHEMA,
   }),
 ]);
 
@@ -229,7 +238,10 @@ const RESULT_SCHEMAS = Object.freeze({
   unity_debug_list_targets: z.strictObject({
     targets: z.array(TARGET_SCHEMA),
   }),
-  unity_debug_attach: ATTACHED_STATUS_SCHEMA.extend({ reused: z.boolean() }),
+  unity_debug_attach: ATTACHED_STATUS_SCHEMA.extend({
+    session: TRACKED_SESSION_SELECTION_SCHEMA,
+    reused: z.boolean(),
+  }),
   unity_debug_status: STATUS_OUTPUT_SCHEMA,
   unity_debug_disconnect: z.strictObject({
     sessionRef: SESSION_REF_SCHEMA,
@@ -367,9 +379,7 @@ const READ_ONLY = new Set<ToolName>([
 const DESTRUCTIVE = new Set<ToolName>([
   "unity_debug_disconnect",
   "unity_debug_remove_breakpoint",
-  "unity_debug_set_exception_breakpoints",
   "unity_debug_evaluate_explicit",
-  "unity_debug_pause",
   "unity_debug_continue",
   "unity_debug_step",
 ]);
