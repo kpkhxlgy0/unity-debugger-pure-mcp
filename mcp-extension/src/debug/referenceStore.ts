@@ -1,13 +1,20 @@
-import { randomBytes } from "node:crypto";
+import {
+  createHmac,
+  randomBytes as nodeRandomBytes,
+} from "node:crypto";
 
 import type { StructuredToolError } from "../tools/errors.js";
 
-const REFERENCE_BYTES = 16;
-const MAX_COLLISION_RETRIES = 128;
+const SECRET_BYTES = 32;
+const AUTHENTICATION_TAG_BYTES = 16;
+const REFERENCE_CONTEXT = Buffer.from(
+  "unity-debugger-pure-mcp/reference/v1\0",
+  "utf8",
+);
 
 export type ReferenceKind = "thread" | "frame" | "scope" | "variable";
 
-type ReferenceGenerator = () => string;
+type RandomBytes = (size: number) => Buffer;
 
 interface ReferenceRecord {
   readonly sessionId: string;
@@ -24,19 +31,23 @@ const STALE_REFERENCE_ERROR: StructuredToolError = Object.freeze({
   action: "Request fresh debugger data and retry with its opaque reference.",
 });
 
-function generateReference(): string {
-  return randomBytes(REFERENCE_BYTES).toString("base64url");
-}
-
 /** Stores raw DAP handles behind generation-bound, lifetime-unique references. */
 export class ReferenceStore {
-  readonly #generate: ReferenceGenerator;
+  readonly #secret: Buffer;
   readonly #records = new Map<string, ReferenceRecord>();
   readonly #referencesBySession = new Map<string, Set<string>>();
-  readonly #issued = new Set<string>();
+  #counter = 0n;
 
-  public constructor(generate: ReferenceGenerator = generateReference) {
-    this.#generate = generate;
+  public constructor(randomBytes: RandomBytes = nodeRandomBytes) {
+    const secret = randomBytes(SECRET_BYTES);
+    if (secret.byteLength !== SECRET_BYTES) {
+      throw new Error("Reference secret entropy source returned an invalid length.");
+    }
+    this.#secret = Buffer.from(secret);
+  }
+
+  public get activeReferenceCount(): number {
+    return this.#records.size;
   }
 
   public create<T>(
@@ -45,24 +56,15 @@ export class ReferenceStore {
     kind: ReferenceKind,
     value: T,
   ): string {
-    for (let attempt = 0; attempt < MAX_COLLISION_RETRIES; attempt += 1) {
-      const reference = this.#generate();
-      if (reference.length === 0 || this.#issued.has(reference)) {
-        continue;
-      }
-
-      this.#issued.add(reference);
-      this.#records.set(reference, { sessionId, generation, kind, value });
-      let references = this.#referencesBySession.get(sessionId);
-      if (references === undefined) {
-        references = new Set<string>();
-        this.#referencesBySession.set(sessionId, references);
-      }
-      references.add(reference);
-      return reference;
+    const reference = this.#nextReference();
+    this.#records.set(reference, { sessionId, generation, kind, value });
+    let references = this.#referencesBySession.get(sessionId);
+    if (references === undefined) {
+      references = new Set<string>();
+      this.#referencesBySession.set(sessionId, references);
     }
-
-    throw new Error("Unable to allocate a unique debugger reference.");
+    references.add(reference);
+    return reference;
   }
 
   public resolve<T>(
@@ -93,4 +95,27 @@ export class ReferenceStore {
     }
     this.#referencesBySession.delete(sessionId);
   }
+
+  #nextReference(): string {
+    this.#counter += 1n;
+    const counter = encodeCounter(this.#counter);
+    const tag = createHmac("sha256", this.#secret)
+      .update(REFERENCE_CONTEXT)
+      .update(counter)
+      .digest()
+      .subarray(0, AUTHENTICATION_TAG_BYTES);
+
+    // The counter bytes make references strictly non-repeating without a
+    // lifetime tombstone set. The secret HMAC tag prevents a predictable
+    // counter alone from becoming a forgeable reference.
+    return Buffer.concat([counter, tag]).toString("base64url");
+  }
+}
+
+function encodeCounter(counter: bigint): Buffer {
+  let hex = counter.toString(16);
+  if (hex.length % 2 !== 0) {
+    hex = `0${hex}`;
+  }
+  return Buffer.from(hex, "hex");
 }

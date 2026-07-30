@@ -23,6 +23,7 @@ function projected(
   phase: ProjectedStateEvent["state"]["phase"],
   stopGeneration: number,
 ): ProjectedStateEvent {
+  const reason = kind === "stopped" ? "breakpoint" : undefined;
   return Object.freeze({
     sequence,
     kind,
@@ -30,6 +31,7 @@ function projected(
       phase,
       stopGeneration,
       eventSequence: sequence,
+      ...(reason === undefined ? {} : { reason }),
     }),
   });
 }
@@ -136,6 +138,38 @@ describe("EventBuffer", () => {
     expect(() => buffer.appendProjected(projected(2, "continued", "running", 2))).toThrow(
       "Projected event sequence is not the next current sequence.",
     );
+  });
+
+  it("rejects projected events whose kind, phase, and reason are inconsistent", () => {
+    const invalidEvents: readonly ProjectedStateEvent[] = [
+      projected(1, "stopped", "running", 1),
+      {
+        ...projected(1, "stopped", "stopped", 1),
+        state: { phase: "stopped", stopGeneration: 1, eventSequence: 1, reason: "" },
+      },
+      projected(1, "continued", "stopped", 2),
+      {
+        ...projected(1, "continued", "running", 2),
+        state: {
+          phase: "running",
+          stopGeneration: 2,
+          eventSequence: 1,
+          reason: "stale reason",
+        },
+      },
+      projected(1, "reload-started", "running", 2),
+      projected(1, "reload-completed", "reloading", 3),
+      projected(1, "terminated", "running", 3),
+    ];
+
+    for (const event of invalidEvents) {
+      const cursor = new EventSequencer();
+      const buffer = new EventBuffer(cursor);
+      cursor.next();
+      expect(() => buffer.appendProjected(event)).toThrow(
+        "Projected event kind and state are inconsistent.",
+      );
+    }
   });
 
   it("projects state fields without retaining thread IDs or arbitrary DAP payload", () => {
@@ -277,6 +311,21 @@ describe("EventBuffer", () => {
     expect(vi.getTimerCount()).toBe(0);
   });
 
+  it("rejects a pre-aborted wait even when a matching event is already buffered", async () => {
+    const buffer = new EventBuffer(new EventSequencer());
+    buffer.append({ kind: "breakpoint" });
+    const controller = new AbortController();
+    controller.abort();
+
+    await expect(buffer.waitFor(0, ["breakpoint"], 30_000, controller.signal)).rejects.toEqual({
+      code: "CANCELLED",
+      message: "The debugger event wait was cancelled.",
+      retryable: true,
+      currentState: "unchanged",
+      action: "Retry the wait if the event is still needed.",
+    });
+  });
+
   it("clamps requested timeouts to the inclusive zero-to-60-second range", async () => {
     vi.useFakeTimers();
     const buffer = new EventBuffer(new EventSequencer());
@@ -290,6 +339,25 @@ describe("EventBuffer", () => {
     const zeroError = rejectionOf(buffer.waitFor(0, undefined, -1));
     await vi.advanceTimersByTimeAsync(0);
     expect(await zeroError).toMatchObject({ code: "TIMEOUT" });
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("handles NaN and signed infinities with explicit clamped timeout semantics", async () => {
+    vi.useFakeTimers();
+    const buffer = new EventBuffer(new EventSequencer());
+    const notANumber = rejectionOf(buffer.waitFor(0, undefined, Number.NaN));
+    const positiveInfinity = rejectionOf(buffer.waitFor(0, undefined, Number.POSITIVE_INFINITY));
+    const negativeInfinity = rejectionOf(buffer.waitFor(0, undefined, Number.NEGATIVE_INFINITY));
+
+    await vi.advanceTimersByTimeAsync(0);
+    expect(await negativeInfinity).toMatchObject({ code: "TIMEOUT" });
+    await vi.advanceTimersByTimeAsync(29_999);
+    expect(vi.getTimerCount()).toBe(2);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(await notANumber).toMatchObject({ code: "TIMEOUT" });
+    expect(vi.getTimerCount()).toBe(1);
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(await positiveInfinity).toMatchObject({ code: "TIMEOUT" });
     expect(vi.getTimerCount()).toBe(0);
   });
 

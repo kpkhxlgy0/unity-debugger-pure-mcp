@@ -15,14 +15,14 @@ describe("ReferenceStore", () => {
       const rawId = 9_000_000 + index;
       const ref = store.create("session-1", 3, kind, rawId);
 
-      expect(ref).toMatch(/^[A-Za-z0-9_-]{22}$/);
+      expect(ref).toMatch(/^[A-Za-z0-9_-]{23,}$/);
       expect(ref).not.toContain(String(rawId));
       expect(store.resolve(ref, "session-1", 3, kind)).toBe(rawId);
     }
   });
 
   it("returns the same frozen sanitized stale error for every identity mismatch", () => {
-    const store = new ReferenceStore(() => "opaque-ref");
+    const store = new ReferenceStore(() => Buffer.alloc(32, 1));
     const ref = store.create("session-1", 3, "frame", 42);
     const attempts = [
       () => store.resolve("missing", "session-1", 3, "frame"),
@@ -52,15 +52,17 @@ describe("ReferenceStore", () => {
     });
   });
 
-  it("invalidates one session efficiently without affecting another session", () => {
-    const generated = ["session-1-a", "session-1-b", "session-2-a"];
-    const store = new ReferenceStore(() => generated.shift()!);
+  it("invalidates one session and releases its live records without affecting another session", () => {
+    const store = new ReferenceStore(() => Buffer.alloc(32, 2));
     const first = store.create("session-1", 3, "frame", 11);
     const second = store.create("session-1", 3, "variable", 12);
     const other = store.create("session-2", 3, "thread", 13);
 
+    expect(store.activeReferenceCount).toBe(3);
+
     store.invalidate("session-1");
 
+    expect(store.activeReferenceCount).toBe(1);
     expect(() => store.resolve(first, "session-1", 3, "frame")).toThrowError(
       expect.objectContaining({ code: "STALE_REFERENCE" }),
     );
@@ -68,30 +70,45 @@ describe("ReferenceStore", () => {
       expect.objectContaining({ code: "STALE_REFERENCE" }),
     );
     expect(store.resolve(other, "session-2", 3, "thread")).toBe(13);
+
+    store.invalidate("session-2");
+    expect(store.activeReferenceCount).toBe(0);
   });
 
-  it("never revives an invalidated reference when the generator repeats a lifetime tombstone", () => {
-    const generated = ["ref-old", "ref-old", "ref-new"];
-    const store = new ReferenceStore(() => generated.shift()!);
+  it("never revives an invalidated reference without retaining historical tokens", () => {
+    const store = new ReferenceStore(() => Buffer.alloc(32, 3));
     const oldRef = store.create("session-1", 3, "frame", 42);
     store.invalidate("session-1");
 
     const newRef = store.create("session-1", 4, "frame", 84);
 
-    expect(oldRef).toBe("ref-old");
-    expect(newRef).toBe("ref-new");
+    expect(newRef).not.toBe(oldRef);
     expect(() => store.resolve(oldRef, "session-1", 4, "frame")).toThrowError(
       expect.objectContaining({ code: "STALE_REFERENCE" }),
     );
     expect(store.resolve(newRef, "session-1", 4, "frame")).toBe(84);
   });
 
-  it("retries active collisions and fails closed when uniqueness cannot be obtained", () => {
-    const colliding = new ReferenceStore(() => "same-ref");
-    colliding.create("session-1", 1, "thread", 1);
+  it("derives store-unique authenticated references from a non-wrapping counter", () => {
+    const firstStore = new ReferenceStore(() => Buffer.alloc(32, 4));
+    const secondStore = new ReferenceStore(() => Buffer.alloc(32, 5));
+    const references = new Set<string>();
 
-    expect(() => colliding.create("session-1", 1, "thread", 2)).toThrow(
-      "Unable to allocate a unique debugger reference.",
+    for (let generation = 1; generation <= 1_000; generation += 1) {
+      const reference = firstStore.create("session-1", generation, "thread", generation);
+      references.add(reference);
+      firstStore.invalidate("session-1");
+      expect(firstStore.activeReferenceCount).toBe(0);
+    }
+
+    const otherStoreReference = secondStore.create("session-1", 1, "thread", 1);
+    expect(references.size).toBe(1_000);
+    expect(references.has(otherStoreReference)).toBe(false);
+  });
+
+  it("rejects an entropy source that cannot provide a 256-bit per-store secret", () => {
+    expect(() => new ReferenceStore(() => Buffer.alloc(16))).toThrow(
+      "Reference secret entropy source returned an invalid length.",
     );
   });
 });

@@ -82,6 +82,14 @@ const PHASE_SET = new Set<string>([
   "reloading",
   "terminated",
 ]);
+const PROJECTED_PHASES: Readonly<Record<ProjectedStateEvent["kind"], DebugPhase>> =
+  Object.freeze({
+    stopped: "stopped",
+    continued: "running",
+    "reload-started": "reloading",
+    "reload-completed": "running",
+    terminated: "terminated",
+  });
 
 /** A bounded, sequenced event ring belonging to one debug session. */
 export class EventBuffer {
@@ -154,6 +162,13 @@ export class EventBuffer {
     ) {
       throw new TypeError("Projected event state is invalid.");
     }
+    const hasValidReason =
+      event.kind === "stopped"
+        ? typeof state.reason === "string" && state.reason.length > 0
+        : state.reason === undefined;
+    if (state.phase !== PROJECTED_PHASES[event.kind] || !hasValidReason) {
+      throw new TypeError("Projected event kind and state are inconsistent.");
+    }
 
     const normalized: {
       sequence: number;
@@ -184,12 +199,12 @@ export class EventBuffer {
       return Promise.reject(new TypeError("afterSequence must be a non-negative safe integer."));
     }
     const normalizedKinds = normalizeKinds(kinds);
+    if (signal?.aborted === true) {
+      return Promise.reject(CANCELLED_ERROR);
+    }
     const existing = this.#find(afterSequence, normalizedKinds);
     if (existing !== undefined) {
       return Promise.resolve(existing);
-    }
-    if (signal?.aborted === true) {
-      return Promise.reject(CANCELLED_ERROR);
     }
 
     return new Promise<NormalizedEventRecord>((resolve, reject) => {
