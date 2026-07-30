@@ -105,6 +105,11 @@ interface StoppedContext {
   readonly state: DebugSessionState;
 }
 
+interface ControlCompletion {
+  readonly state: DebugSessionState;
+  readonly transitioning: boolean;
+}
+
 export interface ToolDependency {
   discoverTargets(
     workspaceRoots: readonly string[],
@@ -342,9 +347,7 @@ export class ToolDispatcher {
       const session = this.#sessions.resolveDebugSession(selection);
       this.#syncState(selection.sessionRef, this.#currentState(session));
     } catch {
-      this.#references.invalidate(sessionRef);
-      this.#observedStates.delete(sessionRef);
-      this.#controlTransitions.delete(sessionRef);
+      this.#cleanupSessionRuntime(sessionRef);
     }
   }
 
@@ -586,13 +589,12 @@ export class ToolDispatcher {
       const context = this.#stoppedContext(selection.sessionRef);
       const threads = await this.#dap.threads(context.session);
       this.#assertRequestAuthorized(clientId, client, signal);
-      this.#recheckStopped(context);
+      const freshState = this.#recheckStopped(context);
       return Object.freeze({
-        sessionRef: selection.sessionRef,
-        stopGeneration: context.state.stopGeneration,
+        ...this.#resultMetadata(selection.sessionRef, freshState),
         threads: Object.freeze(threads.map((thread) => this.#threadView(
           selection.sessionRef,
-          context.state.stopGeneration,
+          freshState.stopGeneration,
           thread,
         ))),
       });
@@ -623,15 +625,14 @@ export class ToolDispatcher {
         input.levels,
       );
       this.#assertRequestAuthorized(clientId, client, signal);
-      this.#recheckStopped(context);
+      const freshState = this.#recheckStopped(context);
       const frames = stack.stackFrames.slice(0, input.levels);
       return Object.freeze({
-        sessionRef: selection.sessionRef,
-        stopGeneration: context.state.stopGeneration,
+        ...this.#resultMetadata(selection.sessionRef, freshState),
         totalFrames: stack.totalFrames ?? frames.length,
         frames: Object.freeze(frames.map((frame) => this.#frameView(
           selection.sessionRef,
-          context.state.stopGeneration,
+          freshState.stopGeneration,
           frame,
         ))),
       });
@@ -657,13 +658,12 @@ export class ToolDispatcher {
       );
       const scopes = await this.#dap.scopes(context.session, frameId);
       this.#assertRequestAuthorized(clientId, client, signal);
-      this.#recheckStopped(context);
+      const freshState = this.#recheckStopped(context);
       return Object.freeze({
-        sessionRef: selection.sessionRef,
-        stopGeneration: context.state.stopGeneration,
+        ...this.#resultMetadata(selection.sessionRef, freshState),
         scopes: Object.freeze(scopes.map((scope) => this.#scopeView(
           selection.sessionRef,
-          context.state.stopGeneration,
+          freshState.stopGeneration,
           scope,
         ))),
       });
@@ -693,14 +693,13 @@ export class ToolDispatcher {
         input.count,
       );
       this.#assertRequestAuthorized(clientId, client, signal);
-      this.#recheckStopped(context);
+      const freshState = this.#recheckStopped(context);
       return Object.freeze({
-        sessionRef: selection.sessionRef,
-        stopGeneration: context.state.stopGeneration,
+        ...this.#resultMetadata(selection.sessionRef, freshState),
         variables: Object.freeze(variables.slice(0, input.count).map((variable) =>
           this.#variableView(
             selection.sessionRef,
-            context.state.stopGeneration,
+            freshState.stopGeneration,
             variable,
           )
         )),
@@ -753,31 +752,30 @@ export class ToolDispatcher {
       // No opaque reference is allocated until every requested DAP operation
       // has succeeded and the generation has passed its final check.
       this.#assertRequestAuthorized(clientId, client, signal);
-      this.#recheckStopped(context);
+      const freshState = this.#recheckStopped(context);
       return Object.freeze({
-        sessionRef: selection.sessionRef,
-        stopGeneration: context.state.stopGeneration,
-        reason: context.state.reason,
+        ...this.#resultMetadata(selection.sessionRef, freshState),
+        reason: freshState.reason,
         thread: selectedThread === undefined
           ? null
           : this.#threadView(
             selection.sessionRef,
-            context.state.stopGeneration,
+            freshState.stopGeneration,
             selectedThread,
           ),
         frames: Object.freeze(frames.map((frame) => this.#frameView(
           selection.sessionRef,
-          context.state.stopGeneration,
+          freshState.stopGeneration,
           frame,
         ))),
         scopes: Object.freeze(scopes.map((scope) => this.#scopeView(
           selection.sessionRef,
-          context.state.stopGeneration,
+          freshState.stopGeneration,
           scope,
         ))),
         variables: Object.freeze(variables.map((variable) => this.#variableView(
           selection.sessionRef,
-          context.state.stopGeneration,
+          freshState.stopGeneration,
           variable,
         ))),
       });
@@ -806,10 +804,10 @@ export class ToolDispatcher {
         ? await this.#dap.evaluateExplicit(context.session, frameId, input.expression)
         : await this.#dap.evaluateSafe(context.session, frameId, input.expression);
       this.#assertRequestAuthorized(clientId, client, signal);
-      this.#recheckStopped(context);
+      const freshState = this.#recheckStopped(context);
       return this.#evaluationView(
         selection.sessionRef,
-        context.state.stopGeneration,
+        freshState,
         evaluation,
       );
     };
@@ -849,9 +847,13 @@ export class ToolDispatcher {
         throw error;
       }
       this.#assertRequestAuthorized(clientId, client, signal);
+      const completion = this.#completeControl(
+        selection.sessionRef,
+        session,
+      );
       return Object.freeze({
-        sessionRef: selection.sessionRef,
-        transitioning: true,
+        ...this.#resultMetadata(selection.sessionRef, completion.state),
+        transitioning: completion.transitioning,
       });
     });
   }
@@ -902,9 +904,13 @@ export class ToolDispatcher {
         throw error;
       }
       this.#assertRequestAuthorized(clientId, client, signal);
-      const result: { sessionRef: string; transitioning: true; kind?: string } = {
-        sessionRef: selection.sessionRef,
-        transitioning: true,
+      const completion = this.#completeControl(
+        selection.sessionRef,
+        session,
+      );
+      const result: Record<string, unknown> = {
+        ...this.#resultMetadata(selection.sessionRef, completion.state),
+        transitioning: completion.transitioning,
       };
       if (operation !== "continue") {
         result.kind = operation;
@@ -934,9 +940,9 @@ export class ToolDispatcher {
       signal,
     );
     this.#assertRequestAuthorized(clientId, client, signal);
-    this.#sessions.resolveDebugSession(this.#sessions.selectForInspection(selection.sessionRef));
+    const freshState = this.#freshLiveState(selection.sessionRef, session);
     return Object.freeze({
-      sessionRef: selection.sessionRef,
+      ...this.#resultMetadata(selection.sessionRef, freshState),
       event,
     });
   }
@@ -1004,7 +1010,7 @@ export class ToolDispatcher {
     }
   }
 
-  #recheckStopped(expected: StoppedContext): void {
+  #recheckStopped(expected: StoppedContext): DebugSessionState {
     let currentSession: vscode.DebugSession;
     try {
       const currentSelection = this.#sessions.selectForInspection(
@@ -1027,6 +1033,7 @@ export class ToolDispatcher {
       throw staleReferenceError();
     }
     this.#assertInspectableState(expected.selection.sessionRef, currentState);
+    return currentState;
   }
 
   #afterInspectionAwait(
@@ -1034,9 +1041,64 @@ export class ToolDispatcher {
     clientId: string,
     client: ClientState,
     signal?: AbortSignal,
-  ): void {
+  ): DebugSessionState {
     this.#assertRequestAuthorized(clientId, client, signal);
-    this.#recheckStopped(context);
+    return this.#recheckStopped(context);
+  }
+
+  #freshLiveState(
+    sessionRef: string,
+    expectedSession: vscode.DebugSession,
+  ): DebugSessionState {
+    let currentSession: vscode.DebugSession;
+    try {
+      const selection = this.#sessions.selectForInspection(sessionRef);
+      currentSession = this.#sessions.resolveDebugSession(selection);
+    } catch {
+      this.#cleanupSessionRuntime(sessionRef);
+      throw notAttachedError();
+    }
+    if (currentSession !== expectedSession) {
+      this.#cleanupSessionRuntime(sessionRef);
+      throw staleReferenceError();
+    }
+    const freshState = this.#currentState(currentSession);
+    this.#syncState(sessionRef, freshState);
+    return freshState;
+  }
+
+  #completeControl(
+    sessionRef: string,
+    expectedSession: vscode.DebugSession,
+  ): ControlCompletion {
+    const state = this.#freshLiveState(sessionRef, expectedSession);
+    return Object.freeze({
+      state,
+      transitioning: this.#controlTransitions.has(sessionRef),
+    });
+  }
+
+  #cleanupSessionRuntime(sessionRef: string): void {
+    this.#references.invalidate(sessionRef);
+    this.#observedStates.delete(sessionRef);
+    this.#controlTransitions.delete(sessionRef);
+  }
+
+  #resultMetadata(
+    sessionRef: string,
+    state: DebugSessionState,
+  ): Readonly<{
+    sessionRef: string;
+    state: DebugSessionState["phase"];
+    stopGeneration: number;
+    eventSequence: number;
+  }> {
+    return Object.freeze({
+      sessionRef,
+      state: this.#controlTransitions.has(sessionRef) ? "running" : state.phase,
+      stopGeneration: state.stopGeneration,
+      eventSequence: state.eventSequence,
+    });
   }
 
   #assertControlPhase(
@@ -1147,7 +1209,11 @@ export class ToolDispatcher {
       result.column = frame.column;
     }
     if (frame.source?.name !== undefined) {
-      result.sourceName = truncateDisplay(frame.source.name).value;
+      const sourceName = truncateDisplay(frame.source.name);
+      result.sourceName = sourceName.value;
+      if (sourceName.truncated) {
+        result.truncated = true;
+      }
     }
     if (name.truncated) {
       result.truncated = true;
@@ -1186,7 +1252,11 @@ export class ToolDispatcher {
       value: value.value,
     };
     if (variable.type !== undefined) {
-      result.type = truncateDisplay(variable.type).value;
+      const type = truncateDisplay(variable.type);
+      result.type = type.value;
+      if (type.truncated) {
+        result.truncated = true;
+      }
     }
     if (variable.variablesReference > 0) {
       result.variablesRef = this.#references.create(
@@ -1204,22 +1274,25 @@ export class ToolDispatcher {
 
   #evaluationView(
     sessionRef: string,
-    generation: number,
+    state: DebugSessionState,
     evaluation: DapEvaluation,
   ): Readonly<Record<string, unknown>> {
     const display = truncateDisplay(evaluation.result);
     const result: Record<string, unknown> = {
-      sessionRef,
-      stopGeneration: generation,
+      ...this.#resultMetadata(sessionRef, state),
       result: display.value,
     };
     if (evaluation.type !== undefined) {
-      result.type = truncateDisplay(evaluation.type).value;
+      const type = truncateDisplay(evaluation.type);
+      result.type = type.value;
+      if (type.truncated) {
+        result.truncated = true;
+      }
     }
     if (evaluation.variablesReference > 0) {
       result.variablesRef = this.#references.create(
         sessionRef,
-        generation,
+        state.stopGeneration,
         "variable",
         evaluation.variablesReference,
       );

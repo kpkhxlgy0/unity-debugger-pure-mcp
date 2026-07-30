@@ -63,6 +63,16 @@ describe("DapGateway", () => {
     });
   });
 
+  it("accepts managed frames without source locations using required zero line and column", async () => {
+    const session = sessionWith({
+      stackFrames: [{ id: 42, name: "Managed Frame", line: 0, column: 0 }],
+    });
+
+    await expect(new DapGateway().stackTrace(session, 7, 0, 20)).resolves.toEqual({
+      stackFrames: [{ id: 42, name: "Managed Frame", line: 0, column: 0 }],
+    });
+  });
+
   it("sends exact control request bodies", async () => {
     const session = sessionWith({});
     const gateway = new DapGateway();
@@ -92,7 +102,7 @@ describe("DapGateway", () => {
 
   it.each([
     ["threads", { threads: [{ id: 1, name: "ok" }, { id: 0, name: "bad" }] }],
-    ["stackTrace", { stackFrames: [{ id: 4, name: "Tick", line: 0, column: 1 }] }],
+    ["stackTrace", { stackFrames: [{ id: 4, name: "Tick", line: 1 }] }],
     ["scopes", { scopes: [{ name: "Locals", variablesReference: -1 }] }],
     ["variables", { variables: [{ name: "x", value: 1, variablesReference: 0 }] }],
     ["evaluate", { result: "ok", variablesReference: Number.NaN }],
@@ -114,6 +124,28 @@ describe("DapGateway", () => {
     expect(error).toMatchObject({ code: "DAP_FAILURE" });
     expect(Object.isFrozen(error)).toBe(true);
     expect(JSON.stringify(error)).not.toContain("private");
+  });
+
+  it.each([
+    { id: 4, name: "Tick", column: 1 },
+    { id: 4, name: "Tick", line: 1 },
+    { id: 4, name: "Tick", line: "1", column: 1 },
+    { id: 4, name: "Tick", line: 1, column: "1" },
+  ])("rejects a stack frame missing or mistyping required locations", async (frame) => {
+    const session = sessionWith({ stackFrames: [frame] });
+
+    await expect(new DapGateway().stackTrace(session, 7, 0, 20))
+      .rejects.toMatchObject({ code: "DAP_FAILURE" });
+  });
+
+  it.each([
+    { name: "Locals", variablesReference: 1 },
+    { name: "Locals", variablesReference: 1, expensive: "false" },
+  ])("rejects a scope without a required boolean expensive field", async (scope) => {
+    const session = sessionWith({ scopes: [scope] });
+
+    await expect(new DapGateway().scopes(session, 42))
+      .rejects.toMatchObject({ code: "DAP_FAILURE" });
   });
 
   it("sanitizes customRequest throws without echoing private details", async () => {

@@ -17,6 +17,9 @@ describe("ToolDispatcher event waits", () => {
       timeoutMs: 100,
     })).resolves.toEqual({
       sessionRef: harness.selection.sessionRef,
+      state: "stopped",
+      stopGeneration: 3,
+      eventSequence: 11,
       event: { sequence: 1, kind: "output", output: "ignored" },
     });
     await expect(harness.dispatcher.call("unity_debug_wait_for_event", {
@@ -26,6 +29,9 @@ describe("ToolDispatcher event waits", () => {
       timeoutMs: 100,
     })).resolves.toEqual({
       sessionRef: harness.selection.sessionRef,
+      state: "stopped",
+      stopGeneration: 3,
+      eventSequence: 11,
       event: expected,
     });
     expect(harness.queue.reads).toBe(0);

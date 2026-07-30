@@ -16,7 +16,7 @@ export interface DapStackFrame {
   readonly id: number;
   readonly name: string;
   readonly line: number;
-  readonly column?: number;
+  readonly column: number;
   readonly source?: DapSource;
 }
 
@@ -207,16 +207,14 @@ function parseStackTrace(value: unknown): DapStackTrace {
       id: number;
       name: string;
       line: number;
-      column?: number;
+      column: number;
       source?: DapSource;
     } = {
       id: positiveHandle(frame.id),
       name: nonEmptyString(frame.name),
-      line: positiveHandle(frame.line),
+      line: nonNegativeInteger(frame.line),
+      column: nonNegativeInteger(frame.column),
     };
-    if (frame.column !== undefined) {
-      result.column = positiveHandle(frame.column);
-    }
     if (frame.source !== undefined) {
       const source = record(frame.source);
       const parsed: { name?: string; path?: string } = {};
@@ -243,13 +241,13 @@ function parseScopes(value: unknown): readonly DapScope[] {
   const input = record(value);
   return Object.freeze(array(input.scopes).map((entry) => {
     const scope = record(entry);
-    if (scope.expensive !== undefined && typeof scope.expensive !== "boolean") {
+    if (typeof scope.expensive !== "boolean") {
       throw new TypeError("invalid scope");
     }
     return Object.freeze({
       name: nonEmptyString(scope.name),
       variablesReference: positiveHandle(scope.variablesReference),
-      expensive: scope.expensive === true,
+      expensive: scope.expensive,
     });
   }));
 }
