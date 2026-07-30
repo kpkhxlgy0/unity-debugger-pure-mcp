@@ -1,16 +1,21 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import test from "node:test";
 
-test("MCP companion is a separate dependent Windows extension", () => {
-  const manifest = JSON.parse(
-    fs.readFileSync("mcp-extension/package.json", "utf8"),
-  );
+test("repository root is the dependent Windows MCP extension", () => {
+  const manifest = readJson("package.json");
+
   assert.equal(manifest.publisher, "kpk");
   assert.equal(manifest.name, "unity-debugger-pure-mcp");
   assert.equal(manifest.version, "0.1.0");
+  assert.equal(
+    manifest.repository.url,
+    "https://github.com/kpkhxlgy0/unity-debugger-pure-mcp.git",
+  );
   assert.equal(manifest.engines.vscode, "^1.101.0");
   assert.equal(manifest.devDependencies["@types/vscode"], "1.101.0");
+  assert.deepEqual(manifest.workspaces, ["server"]);
   assert.deepEqual(manifest.activationEvents, []);
   assert.deepEqual(manifest.extensionDependencies, [
     "kpk.unity-debugger-pure",
@@ -23,101 +28,129 @@ test("MCP companion is a separate dependent Windows extension", () => {
       label: "Unity Debugger Pure MCP",
     },
   ]);
+  assert.equal(fs.existsSync("src/extension.ts"), true);
+  assert.equal(fs.existsSync("server/src/server.ts"), true);
+  assert.equal(fs.existsSync("tests/extension/vscode-1.101-boundary.ts"), true);
+  assert.equal(fs.existsSync("mcp-extension"), false);
+  assert.equal(fs.existsSync("mcp-server"), false);
 });
 
-test("debugger VSIX excludes companion workspaces", () => {
-  const ignore = fs.readFileSync(".vscodeignore", "utf8");
-  assert.match(ignore, /^mcp-extension\/\*\*$/m);
-  assert.match(ignore, /^mcp-server\/\*\*$/m);
+test("only the private server workspace loads MCP runtime dependencies", () => {
+  const extension = readJson("package.json");
+  const server = readJson("server/package.json");
+
+  assert.equal(extension.dependencies, undefined);
+  assert.equal(server.private, true);
+  assert.equal(server.dependencies["@modelcontextprotocol/sdk"], "1.30.0");
+  assert.equal(server.dependencies.zod, "4.4.3");
 });
 
-test("companion VSIX excludes the workspace parent", () => {
-  const ignore = fs.readFileSync("mcp-extension/.vscodeignore", "utf8");
-  assert.match(ignore, /^\.\.\/\*\*$/m);
-});
+test("TypeScript programs isolate VS Code and server declarations", () => {
+  const extension = readJson("tsconfig.json");
+  const server = readJson("server/tsconfig.json");
 
-test("base and companion TypeScript programs isolate VS Code declarations", () => {
-  const rootManifest = JSON.parse(fs.readFileSync("package.json", "utf8"));
-  const base = JSON.parse(fs.readFileSync("tsconfig.json", "utf8"));
-  const companion = JSON.parse(
-    fs.readFileSync("mcp-extension/tsconfig.json", "utf8"),
-  );
-  const server = JSON.parse(fs.readFileSync("mcp-server/tsconfig.json", "utf8"));
-
-  assert.equal(rootManifest.devDependencies["@types/vscode"], "1.95.0");
-  assert.equal(base.compilerOptions.skipLibCheck, undefined);
-  assert.doesNotMatch(base.include.join("\n"), /^mcp-(extension|server)\//m);
-  assert.deepEqual(companion.compilerOptions.types, ["node", "vscode"]);
-  assert.deepEqual(companion.compilerOptions.typeRoots, [
-    "./node_modules/@types",
-    "../node_modules/@types",
+  assert.equal(extension.compilerOptions.skipLibCheck, undefined);
+  assert.deepEqual(extension.compilerOptions.types, [
+    "node",
+    "vscode",
+    "vitest/globals",
   ]);
-  assert.equal(companion.compilerOptions.baseUrl, undefined);
-  assert.deepEqual(companion.compilerOptions.paths, {
-    vscode: ["./node_modules/@types/vscode/index.d.ts"],
-  });
+  assert.deepEqual(extension.include, [
+    "src/" + "**" + "/*.ts",
+    "tests/extension/" + "**" + "/*.ts",
+    "tests/integration/" + "**" + "/*.ts",
+    "vitest.config.ts",
+    "esbuild.mjs",
+  ]);
+  assert.equal(server.extends, "../tsconfig.json");
   assert.deepEqual(server.compilerOptions.types, ["node"]);
-  assert.ok(fs.existsSync("tests/mcp-extension/vscode-1.101-boundary.ts"));
+  assert.deepEqual(server.include, [
+    "typecheck-anchor.d.ts",
+    "src/" + "**" + "/*.ts",
+    "../tests/server/" + "**" + "/*.ts",
+  ]);
 });
 
-test("companion lock entry pins the stable VS Code MCP API types", () => {
-  const lock = JSON.parse(fs.readFileSync("package-lock.json", "utf8"));
+test("normal scripts typecheck and test both standalone programs", () => {
+  const scripts = readJson("package.json").scripts;
 
-  assert.equal(lock.packages["mcp-extension"].engines.vscode, "^1.101.0");
+  assert.equal(scripts["typecheck:extension"], "tsc -p tsconfig.json");
+  assert.equal(scripts["typecheck:server"], "tsc -p server/tsconfig.json");
   assert.equal(
-    lock.packages["mcp-extension"].devDependencies["@types/vscode"],
-    "1.101.0",
+    scripts.typecheck,
+    "npm run typecheck:extension && npm run typecheck:server",
   );
-  assert.equal(
-    lock.packages["mcp-extension/node_modules/@types/vscode"].version,
-    "1.101.0",
-  );
+  assert.equal(scripts["test:extension"], "vitest run tests/extension");
+  assert.equal(scripts["test:server"], "vitest run tests/server");
+  assert.equal(scripts["test:integration"], "vitest run tests/integration");
 });
 
-test("extension manifests do not load MCP server runtime dependencies", () => {
-  const manifests = [
-    JSON.parse(fs.readFileSync("package.json", "utf8")),
-    JSON.parse(fs.readFileSync("mcp-extension/package.json", "utf8")),
-  ];
+test("lockfile pins stable extension and server workspace dependencies", () => {
+  const lock = readJson("package-lock.json");
 
-  for (const manifest of manifests) {
-    assert.equal(manifest.dependencies?.["@modelcontextprotocol/sdk"], undefined);
-    assert.equal(manifest.dependencies?.zod, undefined);
+  assert.equal(lock.packages[""].engines.vscode, "^1.101.0");
+  assert.equal(
+    lock.packages[""].devDependencies["@types/vscode"],
+    "1.101.0",
+  );
+  assert.equal(lock.packages["node_modules/@types/vscode"].version, "1.101.0");
+  assert.equal(
+    lock.packages.server.dependencies["@modelcontextprotocol/sdk"],
+    "1.30.0",
+  );
+  assert.equal(lock.packages.server.dependencies.zod, "4.4.3");
+  assert.equal(
+    lock.packages["node_modules/@modelcontextprotocol/sdk"].version,
+    "1.30.0",
+  );
+  assert.equal(lock.packages["node_modules/zod"].version, "4.4.3");
+});
+
+test("Git ignores generated outputs but keeps product inputs visible", () => {
+  for (const generated of [
+    "node_modules/example.js",
+    "dist/extension.cjs",
+    "coverage/report.json",
+    "cache.tsbuildinfo",
+  ]) {
+    assert.equal(isIgnored(generated), true, `${generated} was not ignored`);
+  }
+  for (const productInput of [
+    "src/extension.ts",
+    "server/src/server.ts",
+    "tests/extension/extension.test.ts",
+    "scripts/build-mcp-bridge.mjs",
+    "docs/repository-split-provenance.json",
+    "runtime-inventory.json",
+    ".github/workflows/ci.yml",
+  ]) {
+    assert.equal(
+      isIgnored(productInput),
+      false,
+      `${productInput} was unexpectedly ignored`,
+    );
   }
 });
 
-test("MCP workspace typechecks include tests and run from normal scripts", () => {
-  const manifest = JSON.parse(fs.readFileSync("package.json", "utf8"));
-  const companion = JSON.parse(
-    fs.readFileSync("mcp-extension/tsconfig.json", "utf8"),
-  );
-  const server = JSON.parse(fs.readFileSync("mcp-server/tsconfig.json", "utf8"));
+function readJson(file) {
+  return JSON.parse(fs.readFileSync(file, "utf8"));
+}
 
-  assert.deepEqual(companion.include, [
-    "src/**/*.ts",
-    "../tests/mcp-extension/**/*.ts",
-  ]);
-  assert.deepEqual(server.include, [
-    "typecheck-anchor.d.ts",
-    "src/**/*.ts",
-    "../tests/mcp-server/**/*.ts",
-  ]);
-  assert.ok(fs.existsSync("mcp-server/typecheck-anchor.d.ts"));
-  assert.equal(manifest.scripts["typecheck:base"], "tsc -p tsconfig.json");
-  assert.equal(
-    manifest.scripts["typecheck:mcp-extension"],
-    "tsc -p mcp-extension/tsconfig.json",
+function isIgnored(file) {
+  const result = spawnSync(
+    "git",
+    ["check-ignore", "--quiet", "--no-index", "--", file],
+    {
+      cwd: process.cwd(),
+      encoding: "utf8",
+      timeout: 10_000,
+      windowsHide: true,
+    },
   );
-  assert.equal(
-    manifest.scripts["typecheck:mcp-server"],
-    "tsc -p mcp-server/tsconfig.json",
+  assert.equal(result.error, undefined);
+  assert.ok(
+    result.status === 0 || result.status === 1,
+    `git check-ignore failed for ${file}: ${result.stderr}`,
   );
-  assert.equal(
-    manifest.scripts.typecheck,
-    "npm run typecheck:base && npm run typecheck:mcp-extension && npm run typecheck:mcp-server",
-  );
-  assert.equal(
-    manifest.scripts["test:mcp"],
-    "npm run typecheck:mcp-extension && npm run test:mcp-extension && npm run typecheck:mcp-server && npm run test:mcp-server",
-  );
-});
+  return result.status === 0;
+}

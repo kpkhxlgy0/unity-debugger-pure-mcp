@@ -1,7 +1,0 @@
-{
-  "main": "mcp-server/dist/server.cjs",
-  "mainFormat": "commonjs",
-  "output": "mcp-extension/dist/mcp-bridge.exe",
-  "useSnapshot": false,
-  "useCodeCache": false
-}

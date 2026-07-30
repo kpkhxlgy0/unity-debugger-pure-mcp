@@ -1,0 +1,560 @@
+{
+  "schemaVersion": 1,
+  "sourceRepository": "kpkhxlgy0/unity-debugger-vscode",
+  "sourceBranch": "feature/unity-debugger-pure-mcp",
+  "sourceCommit": "7777672510c3502887774b9a05de00e363ec7149",
+  "retainedCommits": [
+    {
+      "source": "17f2e3b8ebad6bc347fad94affb51b11dd2d2ecb",
+      "target": "b223f10654ef5545a2c62d68f2e202db44120aff",
+      "subject": "docs: design MCP companion extension",
+      "author": "XiaoLongHan <kpkhxlgy0@163.com>",
+      "authorDate": "2026-07-30T03:15:08+08:00",
+      "committer": "XiaoLongHan <kpkhxlgy0@163.com>",
+      "committerDate": "2026-07-30T03:15:08+08:00"
+    },
+    {
+      "source": "5ed513d6a4406f079e3b8510c963a5a9ac66f66e",
+      "target": "5a78bf6554447dea4fdd3050f6510a70c2b78cd1",
+      "subject": "docs: plan MCP companion implementation",
+      "author": "XiaoLongHan <kpkhxlgy0@163.com>",
+      "authorDate": "2026-07-30T03:36:54+08:00",
+      "committer": "XiaoLongHan <kpkhxlgy0@163.com>",
+      "committerDate": "2026-07-30T03:36:54+08:00"
+    },
+    {
+      "source": "d83987739e78cd1decb347b04031366f2bbcf06c",
+      "target": "e6aeb8e3c1ab260711d0e632b9f32867f422935d",
+      "subject": "build: scaffold MCP companion workspaces",
+      "author": "XiaoLongHan <kpkhxlgy0@163.com>",
+      "authorDate": "2026-07-30T10:05:28+08:00",
+      "committer": "XiaoLongHan <kpkhxlgy0@163.com>",
+      "committerDate": "2026-07-30T10:05:28+08:00"
+    },
+    {
+      "source": "a258658293b540a418983279bef801820d3dcc03",
+      "target": "ebff7f7445a8b8ccd2b5570a4dc09ee4e5c825f6",
+      "subject": "fix: isolate companion type declarations",
+      "author": "XiaoLongHan <kpkhxlgy0@163.com>",
+      "authorDate": "2026-07-30T10:14:42+08:00",
+      "committer": "XiaoLongHan <kpkhxlgy0@163.com>",
+      "committerDate": "2026-07-30T10:14:42+08:00"
+    },
+    {
+      "source": "39356b20feb0a7fdbdd27d4e98c8d6f6fbda94a0",
+      "target": "7676448d22621374bfd0d4eba19cc9540af6404a",
+      "subject": "fix: typecheck MCP workspaces",
+      "author": "XiaoLongHan <kpkhxlgy0@163.com>",
+      "authorDate": "2026-07-30T10:19:42+08:00",
+      "committer": "XiaoLongHan <kpkhxlgy0@163.com>",
+      "committerDate": "2026-07-30T10:19:42+08:00"
+    },
+    {
+      "source": "1754a646bcf5ad747832fbe1007ae52099c03803",
+      "target": "3060179376e958cacf43e0961d9782c6347d914c",
+      "subject": "fix: pin companion VS Code types",
+      "author": "XiaoLongHan <kpkhxlgy0@163.com>",
+      "authorDate": "2026-07-30T10:26:13+08:00",
+      "committer": "XiaoLongHan <kpkhxlgy0@163.com>",
+      "committerDate": "2026-07-30T10:26:13+08:00"
+    },
+    {
+      "source": "32091f243a2be0a8533f2a5232375924ee65c264",
+      "target": "809339f9aa8e3dd9b7c691ef4e80f5e0cdb9ae47",
+      "subject": "fix: require stable VS Code MCP API",
+      "author": "XiaoLongHan <kpkhxlgy0@163.com>",
+      "authorDate": "2026-07-30T10:33:10+08:00",
+      "committer": "XiaoLongHan <kpkhxlgy0@163.com>",
+      "committerDate": "2026-07-30T10:33:10+08:00"
+    },
+    {
+      "source": "e102d875089bbcbbed764a07503f823c6470f18f",
+      "target": "b685d9c3e17bb2281d138720b77a0ba9a7d73caf",
+      "subject": "test: preserve base VS Code type boundary",
+      "author": "XiaoLongHan <kpkhxlgy0@163.com>",
+      "authorDate": "2026-07-30T10:40:15+08:00",
+      "committer": "XiaoLongHan <kpkhxlgy0@163.com>",
+      "committerDate": "2026-07-30T10:40:15+08:00"
+    },
+    {
+      "source": "c12c12092aa2d95bad629dc2d6a15443bbf18b1d",
+      "target": "8373669f22e9205c26d80e94302f9569632ef983",
+      "subject": "feat: add authenticated MCP bridge transport",
+      "author": "XiaoLongHan <kpkhxlgy0@163.com>",
+      "authorDate": "2026-07-30T10:56:29+08:00",
+      "committer": "XiaoLongHan <kpkhxlgy0@163.com>",
+      "committerDate": "2026-07-30T10:56:29+08:00"
+    },
+    {
+      "source": "38ec4f297e5ba1359c3cb639b2fd651fbbf36820",
+      "target": "0a3f70cd7924effa16192093d0abe720f5e1341f",
+      "subject": "fix: harden bridge lifecycle",
+      "author": "XiaoLongHan <kpkhxlgy0@163.com>",
+      "authorDate": "2026-07-30T11:12:59+08:00",
+      "committer": "XiaoLongHan <kpkhxlgy0@163.com>",
+      "committerDate": "2026-07-30T11:12:59+08:00"
+    },
+    {
+      "source": "5abeb9e4defc788d10c0855c37b22eaa25c15f8f",
+      "target": "8e77e5885fe9aaa8084bae02f93f02268ea09322",
+      "subject": "feat: track debugger sessions for MCP",
+      "author": "XiaoLongHan <kpkhxlgy0@163.com>",
+      "authorDate": "2026-07-30T11:30:52+08:00",
+      "committer": "XiaoLongHan <kpkhxlgy0@163.com>",
+      "committerDate": "2026-07-30T11:30:52+08:00"
+    },
+    {
+      "source": "3e120f4d1a8ea3048bc3078f2493f2640210343b",
+      "target": "0fe02febf6b7fac6107da8f3866c1033b45f2498",
+      "subject": "fix: harden debugger session state",
+      "author": "XiaoLongHan <kpkhxlgy0@163.com>",
+      "authorDate": "2026-07-30T11:43:08+08:00",
+      "committer": "XiaoLongHan <kpkhxlgy0@163.com>",
+      "committerDate": "2026-07-30T11:43:08+08:00"
+    },
+    {
+      "source": "da4223db9fd9e194e9bd7c42827f1078f77a0aa3",
+      "target": "4108ed52bc09ef5f770014b262de60650ab0e59f",
+      "subject": "docs: unify MCP event sequencing",
+      "author": "XiaoLongHan <kpkhxlgy0@163.com>",
+      "authorDate": "2026-07-30T11:46:40+08:00",
+      "committer": "XiaoLongHan <kpkhxlgy0@163.com>",
+      "committerDate": "2026-07-30T11:46:40+08:00"
+    },
+    {
+      "source": "a1444d634df1484d0e6ffc18ad83a8ae575256a2",
+      "target": "f0e7f5c37c73cb128601e2885157110a31598b39",
+      "subject": "feat: add MCP debug state primitives",
+      "author": "XiaoLongHan <kpkhxlgy0@163.com>",
+      "authorDate": "2026-07-30T11:58:38+08:00",
+      "committer": "XiaoLongHan <kpkhxlgy0@163.com>",
+      "committerDate": "2026-07-30T11:58:38+08:00"
+    },
+    {
+      "source": "6e588d8aecf056cd410da23eaf0fb7cc6bc50227",
+      "target": "d503186077440517789775662ceacddaaf0f8713",
+      "subject": "fix: harden MCP debug state primitives",
+      "author": "XiaoLongHan <kpkhxlgy0@163.com>",
+      "authorDate": "2026-07-30T12:09:16+08:00",
+      "committer": "XiaoLongHan <kpkhxlgy0@163.com>",
+      "committerDate": "2026-07-30T12:09:16+08:00"
+    },
+    {
+      "source": "df55cc4d51c59cd63067226f5ed6ffb747339e01",
+      "target": "4551898f5cf6c8add3e8d6d7516831be26670aed",
+      "subject": "feat: add MCP lifecycle and breakpoint tools",
+      "author": "XiaoLongHan <kpkhxlgy0@163.com>",
+      "authorDate": "2026-07-30T12:27:32+08:00",
+      "committer": "XiaoLongHan <kpkhxlgy0@163.com>",
+      "committerDate": "2026-07-30T12:27:32+08:00"
+    },
+    {
+      "source": "605187628133b21314ef49fe234f91348ddbf76a",
+      "target": "1ed63ebc2bc66d1e030b83cf8aa3ed7c1a4e003d",
+      "subject": "fix: harden MCP lifecycle tools",
+      "author": "XiaoLongHan <kpkhxlgy0@163.com>",
+      "authorDate": "2026-07-30T12:45:21+08:00",
+      "committer": "XiaoLongHan <kpkhxlgy0@163.com>",
+      "committerDate": "2026-07-30T12:45:21+08:00"
+    },
+    {
+      "source": "e6a58e14ff082087639a019a75cf939673cb69cc",
+      "target": "6db1874a4ef025befdf3817b9ff08d54c2771871",
+      "subject": "fix: canonicalize MCP attach roots",
+      "author": "XiaoLongHan <kpkhxlgy0@163.com>",
+      "authorDate": "2026-07-30T12:52:48+08:00",
+      "committer": "XiaoLongHan <kpkhxlgy0@163.com>",
+      "committerDate": "2026-07-30T12:52:48+08:00"
+    },
+    {
+      "source": "4323c6bdf55953190e66925b81a85a902ecf9b11",
+      "target": "3b04960bce4001eb2f13c90861c38975bae8d9ae",
+      "subject": "feat: expose complete MCP debug controls",
+      "author": "XiaoLongHan <kpkhxlgy0@163.com>",
+      "authorDate": "2026-07-30T13:15:34+08:00",
+      "committer": "XiaoLongHan <kpkhxlgy0@163.com>",
+      "committerDate": "2026-07-30T13:15:34+08:00"
+    },
+    {
+      "source": "7bb45dd8c3ea4e2f52d7c85199343d207bd60e7d",
+      "target": "27bf2fdb05fd9f2e68568c38ae477ad8d33a30fb",
+      "subject": "fix: harden MCP debug result contracts",
+      "author": "XiaoLongHan <kpkhxlgy0@163.com>",
+      "authorDate": "2026-07-30T13:32:51+08:00",
+      "committer": "XiaoLongHan <kpkhxlgy0@163.com>",
+      "committerDate": "2026-07-30T13:32:51+08:00"
+    },
+    {
+      "source": "9682a2b0b1c14849dc0bd3fc46016fbd626f8181",
+      "target": "112b764953d306f3aac9dfa3118e158edc4bf767",
+      "subject": "feat: serve Unity debugger tools over MCP",
+      "author": "XiaoLongHan <kpkhxlgy0@163.com>",
+      "authorDate": "2026-07-30T14:05:01+08:00",
+      "committer": "XiaoLongHan <kpkhxlgy0@163.com>",
+      "committerDate": "2026-07-30T14:05:01+08:00"
+    },
+    {
+      "source": "da2e5017a01c6b280eb0acb5ba3aa5a9d1fd7f60",
+      "target": "2d91a8d8726858594fb345c0f5d823227a499a01",
+      "subject": "fix: align MCP tool result contracts",
+      "author": "XiaoLongHan <kpkhxlgy0@163.com>",
+      "authorDate": "2026-07-30T14:19:28+08:00",
+      "committer": "XiaoLongHan <kpkhxlgy0@163.com>",
+      "committerDate": "2026-07-30T14:19:28+08:00"
+    },
+    {
+      "source": "42d88a1561f11ffd01deecfdab9c116613043c5b",
+      "target": "1f60134ed81a4f3ecf5e7485bea8a18c7ede9434",
+      "subject": "feat: register debugger MCP companion",
+      "author": "XiaoLongHan <kpkhxlgy0@163.com>",
+      "authorDate": "2026-07-30T14:55:07+08:00",
+      "committer": "XiaoLongHan <kpkhxlgy0@163.com>",
+      "committerDate": "2026-07-30T14:55:07+08:00"
+    },
+    {
+      "source": "d6bf1063c852d2d367837ececbf4fc72097d7847",
+      "target": "64e516acc693e362f7febbefd7c7c0d506452ae5",
+      "subject": "fix: harden MCP companion lifecycle",
+      "author": "XiaoLongHan <kpkhxlgy0@163.com>",
+      "authorDate": "2026-07-30T15:26:33+08:00",
+      "committer": "XiaoLongHan <kpkhxlgy0@163.com>",
+      "committerDate": "2026-07-30T15:26:33+08:00"
+    },
+    {
+      "source": "ca9ef1728e2d0244d06514108363388945c73f10",
+      "target": "db4d060a370a0176757a34f9b3cff19fe7de1500",
+      "subject": "build: package MCP companion extension",
+      "author": "XiaoLongHan <kpkhxlgy0@163.com>",
+      "authorDate": "2026-07-30T16:17:41+08:00",
+      "committer": "XiaoLongHan <kpkhxlgy0@163.com>",
+      "committerDate": "2026-07-30T16:17:41+08:00"
+    },
+    {
+      "source": "21bef7876fc33d172623a93ecbbd095a1c242976",
+      "target": "dd33527f6031c01a625e75430ee7efe42863d3d8",
+      "subject": "fix: harden MCP companion package validation",
+      "author": "XiaoLongHan <kpkhxlgy0@163.com>",
+      "authorDate": "2026-07-30T16:44:14+08:00",
+      "committer": "XiaoLongHan <kpkhxlgy0@163.com>",
+      "committerDate": "2026-07-30T16:44:14+08:00"
+    },
+    {
+      "source": "c3c5d3ecfe8c786d0cbd9ec015dd3c721930b3ce",
+      "target": "5ce3a438828b2a8fb0f42e72e488da9897a91b94",
+      "subject": "fix: enforce MCP cancellation and response budgets",
+      "author": "XiaoLongHan <kpkhxlgy0@163.com>",
+      "authorDate": "2026-07-30T17:53:41+08:00",
+      "committer": "XiaoLongHan <kpkhxlgy0@163.com>",
+      "committerDate": "2026-07-30T17:53:41+08:00"
+    },
+    {
+      "source": "0b94f773bfe0352c2e452c047aaff17479ad185c",
+      "target": "24702e6aded36c39ec4ea41222d7ef9dacd2cd0b",
+      "subject": "docs: design MCP companion repository split",
+      "author": "XiaoLongHan <kpkhxlgy0@163.com>",
+      "authorDate": "2026-07-30T20:21:10+08:00",
+      "committer": "XiaoLongHan <kpkhxlgy0@163.com>",
+      "committerDate": "2026-07-30T20:21:10+08:00"
+    },
+    {
+      "source": "75fe8a4ccec80a192dd13f1dccad65eed532eaca",
+      "target": "1afbd24171a02148017b8c4d70be53562628c935",
+      "subject": "docs: plan MCP companion repository split",
+      "author": "XiaoLongHan <kpkhxlgy0@163.com>",
+      "authorDate": "2026-07-30T20:38:46+08:00",
+      "committer": "XiaoLongHan <kpkhxlgy0@163.com>",
+      "committerDate": "2026-07-30T20:38:46+08:00"
+    },
+    {
+      "source": "7777672510c3502887774b9a05de00e363ec7149",
+      "target": "7d1b9e6f4c94eb015af92511e25f9f5167f2f84c",
+      "subject": "build: add audited MCP history extractor",
+      "author": "XiaoLongHan <kpkhxlgy0@163.com>",
+      "authorDate": "2026-07-30T20:46:31+08:00",
+      "committer": "XiaoLongHan <kpkhxlgy0@163.com>",
+      "committerDate": "2026-07-30T20:46:31+08:00"
+    }
+  ],
+  "content": {
+    "docs/superpowers/plans/2026-07-30-mcp-companion-core.md": {
+      "gitBlob": "9e219e85c5ef5fd12c4c1541100b5a501c52d9e4",
+      "sha256": "6621099caccfb9a461d6ee60725c0a67c1a6cfda5958afe20afe4828e2a32f69"
+    },
+    "docs/superpowers/plans/2026-07-30-mcp-external-bridge-release.md": {
+      "gitBlob": "20454320b8bcbf5c5fbd23bb3a123a1288f72e02",
+      "sha256": "ae9f026c91eda8ec81f23217841cab9fada5cdf7b41b9a3dae8d838e3fcad1dd"
+    },
+    "docs/superpowers/plans/2026-07-30-unity-debugger-pure-mcp-repository-split.md": {
+      "gitBlob": "b1ced8b9738aef1daf6887e00856525f60c62e69",
+      "sha256": "d796e185888d4fe28a7f4e776cb0f0ae46ee3c2427bb47374364fd060954fc7d"
+    },
+    "docs/superpowers/specs/2026-07-30-unity-debugger-pure-mcp-companion-design.md": {
+      "gitBlob": "1ffa7ad4d36ad3f4ff224559b621361018a0db80",
+      "sha256": "1fbf8424dbe372dd836febc5243951ee235256e9a1daa9e66549bcf98f52c009"
+    },
+    "docs/superpowers/specs/2026-07-30-unity-debugger-pure-mcp-repository-split-design.md": {
+      "gitBlob": "e657c57e8a46ac4c06f14d4f0f522df2f3775d9d",
+      "sha256": "19f3dabd691229de3dbaf44cf28ed012d8c7f7565f97fcb8d1b49a0f994d4ada"
+    },
+    "mcp-extension/.vscodeignore": {
+      "gitBlob": "e32ca7ddb81194594ccd836204ab4d50df90f223",
+      "sha256": "11d5c4a4ac5a74c04c86ae0f4727fe9aa306d820f1e9e7b201b5c367cea01c36"
+    },
+    "mcp-extension/CHANGELOG.md": {
+      "gitBlob": "8e9ca8415ae8d9c30aa5212fe44bb6df5f242cf4",
+      "sha256": "0651172d1e4b5af12437d40ff9ca95f32e7beb4f10f4e475444b27cfb4bd6d74"
+    },
+    "mcp-extension/esbuild.mjs": {
+      "gitBlob": "78737e5a5fc11aa2f971567150db9b7092832b9c",
+      "sha256": "c497dd6c8137907aeb2793fa3aae85198bc90fd59b9f0f0e6c5530a438f94e26"
+    },
+    "mcp-extension/LICENSE.txt": {
+      "gitBlob": "04a2854c1d013428195e62f8b937b3a63b72e23a",
+      "sha256": "0318948dc5cbcc09134e13dbbf473080c676f54eb42e37c928fe1503163dcfed"
+    },
+    "mcp-extension/package.json": {
+      "gitBlob": "a663e232723c34dc3616e1a70f064d743ca1d486",
+      "sha256": "8b03983299ca3eb9ba3a0527b758f7a40135dc6f33d042ac117335d3500e0117"
+    },
+    "mcp-extension/README.md": {
+      "gitBlob": "f4ec90c42f7ff188270be5a65fc9a4b63b75d980",
+      "sha256": "c9998e056a28b8c20cfd642fa69070e1a9fc4d904c2565be2e782f4c2d456eb7"
+    },
+    "mcp-extension/runtime-inventory.json": {
+      "gitBlob": "575b0fee6bb613c99b9af35e7fc70ab687c112b6",
+      "sha256": "57a2dd44eed51651d27452ef6b708a011bff499f512a956b2734035da5212ae9"
+    },
+    "mcp-extension/SECURITY.md": {
+      "gitBlob": "3a4eca52b33a274710a515e8cff6d8481685f5ac",
+      "sha256": "38c01a48a48b14e4d2379b2e4468e386efcf37bd50d2af8433a4d5f42f65a562"
+    },
+    "mcp-extension/src/bridge/bridgeHost.ts": {
+      "gitBlob": "2af38ef8aec752093d08d93e886d8ddd89ac1e36",
+      "sha256": "efb7a93ab5c197a8ccf792be5e712180bb82aca3a012e0104a8364dc3e09921a"
+    },
+    "mcp-extension/src/bridge/framing.ts": {
+      "gitBlob": "3dced6ea7aa6b08ad9f5ffbdad5e36d27aaf5a12",
+      "sha256": "af0675da0b13ba9dc7a45807a99bd6558054305c157450aa3ab7b793246d33af"
+    },
+    "mcp-extension/src/bridge/protocol.ts": {
+      "gitBlob": "3848dc6071ed0047a2ed25aeee2c2e51ce9516ef",
+      "sha256": "49373b83fa4fc2a9c6874abea0dd67155d8f113fd4d1dbd6fa51d12d27bed987"
+    },
+    "mcp-extension/src/debug/breakpointRegistry.ts": {
+      "gitBlob": "8f6a4dc31ef0ceaa3b1cae0fe9cc66257ac558b8",
+      "sha256": "36272c035db6de9285c89383d70478a0f530406c59b214d5ef36d62e8990400f"
+    },
+    "mcp-extension/src/debug/commandQueue.ts": {
+      "gitBlob": "2374152726e3c0efba6465586048254d87abe349",
+      "sha256": "01222a657ceb8b352a3dd86bfe3faeacb5b9ae352d86c87ff1e4b441c5bb5cdb"
+    },
+    "mcp-extension/src/debug/dapGateway.ts": {
+      "gitBlob": "10d1e22e2b62fbf2506731e148d797fa8cd0f622",
+      "sha256": "c75609fd02f92a5bf30754e4ab9625315b639e8f0d40ad31fd35752aecac14f9"
+    },
+    "mcp-extension/src/debug/eventBuffer.ts": {
+      "gitBlob": "e72ac0a0448a9ea83f4b30c270dbf87df19857ca",
+      "sha256": "cb83ca3ad6889e5b089d5a2e2dd915822fef3e9185d53ff3998ff8d258aaa6ff"
+    },
+    "mcp-extension/src/debug/referenceStore.ts": {
+      "gitBlob": "a3a6c9dc521c3336c4025748a485208d51d34b5a",
+      "sha256": "d5b54cf3126f32d7fe8cf610a7f85cc2a13e3f313a93362c089b95baad74dff0"
+    },
+    "mcp-extension/src/debug/sessionRegistry.ts": {
+      "gitBlob": "b1b7bd4137616d3583c974d65b979e52fe443484",
+      "sha256": "dbc70d0840925a89f4e435c31722a721f67e2f5a2ab742654e81056783a7fa0f"
+    },
+    "mcp-extension/src/debug/stateProjector.ts": {
+      "gitBlob": "7572ba5864cf42cd3d58134ab550f3fcf87d1f17",
+      "sha256": "13736980d0c08190c621b6c446cd3a96602fdf83ff4142cf8fb3be29bcbc192a"
+    },
+    "mcp-extension/src/dependencyAdapter.ts": {
+      "gitBlob": "68382de6a2464c5d479272a2edf4a8305d87faad",
+      "sha256": "7492287670c7b2e529e5c7c467a08bdb8f7a5b2a90f1692fe40316b25aaccea0"
+    },
+    "mcp-extension/src/extension.ts": {
+      "gitBlob": "af951bb6e4d0285829de8dc48bb4f0767c9006ed",
+      "sha256": "5da998db3761b8c3190df2d6a36fcc16e69551d89a5d0fd95f4a613ec2deaaba"
+    },
+    "mcp-extension/src/mcpProvider.ts": {
+      "gitBlob": "8e2cff918fa91940c88c1da635572442cb1bd21e",
+      "sha256": "0812305f2d8b7c8f15f43e9d0779f20d1dcbf098298556db224ff8ec65ad31b5"
+    },
+    "mcp-extension/src/tools/errors.ts": {
+      "gitBlob": "10f198bc2fc8d437851397eb0c1c15b175269438",
+      "sha256": "e157f51454e36288a0b62dfb21bb9909bdef4929ba93c5632ebbd6428695ae46"
+    },
+    "mcp-extension/src/tools/resultBudget.ts": {
+      "gitBlob": "c9ac4ca4ebbc669d9ac10ec802b8dced321b117a",
+      "sha256": "55b20064e95d4819292c4c3e97524abee8c6520cd8492135387da365250b0d8d"
+    },
+    "mcp-extension/src/tools/schemas.ts": {
+      "gitBlob": "dfdf830faebde0741e919269e0194d7f88266ce6",
+      "sha256": "129c6b974b703a26952a4b0a944c819a8f1a34bc1d7bdb8d575fcaafde15fd4c"
+    },
+    "mcp-extension/src/tools/toolDispatcher.ts": {
+      "gitBlob": "0b7ea800bbfe2da0d0ac0e776db4f7797443dd8a",
+      "sha256": "90872a788cc28a95d35ddc37aea2ae44cb71f4ed45c778f364257e07afd1a6a3"
+    },
+    "mcp-extension/THIRD_PARTY_NOTICES.md": {
+      "gitBlob": "bc34a01241d786efffb75ba3a90b5300a2bfe989",
+      "sha256": "5d51f57fa85936e6a09154c4ecb021a22e89f4c91fe7c5aaf82fb559cd9cec31"
+    },
+    "mcp-extension/tsconfig.json": {
+      "gitBlob": "74354a38a7dfb383d76ff4dd9e9dc8632d82f7f1",
+      "sha256": "18f8dfe5bbaf3823a114e133188192e0cd20b5749f8d133956b659e7611c243e"
+    },
+    "mcp-server/esbuild.mjs": {
+      "gitBlob": "0c93007470fc9561e5e9526ebaecd98bbf4db0e8",
+      "sha256": "ef5854c173d1c2ef9cef304076f4cd11b98cc25d332217243ad9cfb0234eeaf5"
+    },
+    "mcp-server/package.json": {
+      "gitBlob": "1bf987abdc3c704941d1c609db9ea6f9ebf315ee",
+      "sha256": "69158fa48027080cd4149951b43b0f8bf2a6db9af27f944e3b68da28cbdf7248"
+    },
+    "mcp-server/sea-config.json": {
+      "gitBlob": "e3c8f6b207709a672a220fa83e805c541e317bc1",
+      "sha256": "8da0fa1da6f4cd2bae642f10f81311a65ede781d1c9a5c9c2f8350cf98f6f679"
+    },
+    "mcp-server/src/bridgeClient.ts": {
+      "gitBlob": "da80b871eac2b5b9873f010fdb182e7c9c7d94d3",
+      "sha256": "9873db72099260d2e886debf220e946499210a70b55f2703a61b7afa6de85498"
+    },
+    "mcp-server/src/server.ts": {
+      "gitBlob": "8a81ebdb1be68e71ea313bc5e574acf756c0cb85",
+      "sha256": "6a2c7999c3f7a6addf2e3e3d1a4ee072dd76ea4e6f4476c6a09e739769ea7e0d"
+    },
+    "mcp-server/src/toolCatalog.ts": {
+      "gitBlob": "82f6a462e837f36c1369b3fce82e0e9fb0f602cd",
+      "sha256": "a68799cd38671ffdf43f24b92468e9d5a6e900817cb84689cb940588894fdb69"
+    },
+    "mcp-server/tsconfig.json": {
+      "gitBlob": "6936b43f690651a56f54de491d50013729dbfdcc",
+      "sha256": "53e17723f83e878345e3b396a34db27ad19b167c32f538b763b7a4a6f6f40b5c"
+    },
+    "mcp-server/typecheck-anchor.d.ts": {
+      "gitBlob": "cb0ff5c3b541f646105198ee23ac0fc3d805023e",
+      "sha256": "8e609bb71c20b858c77f0e9f90bb1319db8477b13f9f965f1a1e18524bf50881"
+    },
+    "scripts/build-mcp-bridge.mjs": {
+      "gitBlob": "8f05aef59d56f0414982b904f902050b799b0993",
+      "sha256": "befd76c406cd1192df7b26d20a33fa6cef0cd72d70933e18e89b47e8827291a5"
+    },
+    "scripts/extract-mcp-history.mjs": {
+      "gitBlob": "f67e69286f783d421a0d5b8a617722e8c53770e4",
+      "sha256": "e8498faa9e3ebf2235d3fd7f22d912d79399d4cdcb704e608be9910e6d592236"
+    },
+    "scripts/mcp-smoke-stdout.mjs": {
+      "gitBlob": "5f57a0d0f4d3a1580c84791dbceb94b567660ba7",
+      "sha256": "895d0fdd9e0db6d8f8a4c01c09f8077e6577f6efa8b05a596b9fc817dbdc4e91"
+    },
+    "scripts/verify-mcp-vsix.mjs": {
+      "gitBlob": "fee76ebd3a2908f87db57055c0848cf4a302da9c",
+      "sha256": "f8b3dad304aa0bbe470202aa6d2b22628d7bf6ce1dd42d6224b9ffe7bb4c0855"
+    },
+    "tests/build/extract-mcp-history.test.mjs": {
+      "gitBlob": "fc919a734ed2400909eff1b0281a70de18536f43",
+      "sha256": "5ea70b3ddb61d1f17ded31101061c8dd0a92f05a67d44149c6ebe0466d2bcd62"
+    },
+    "tests/build/mcp-companion-scaffold.test.mjs": {
+      "gitBlob": "6564391f01bf3e6a195f961febef6a947d37e2f4",
+      "sha256": "dc25c8205de11520636553931bc2cb7f8b70474482cec94335dd2e0afd1a15dc"
+    },
+    "tests/integration/mcpCompanion.integration.test.ts": {
+      "gitBlob": "5e1d018df14637493874c7e4b109c6d17e08709b",
+      "sha256": "a9aec521a02c2b9681e6c3f86759f4fef787cf36f21f18955dfa7fbf6f2cd0a9"
+    },
+    "tests/mcp-extension/breakpointRegistry.test.ts": {
+      "gitBlob": "a1e1d8f0f9abd361878de9d36d7da0385a2b2f31",
+      "sha256": "abcc425f0a80f81bef48a073904250a04e60b6eaef9d0f7002b274eaa33c0ce8"
+    },
+    "tests/mcp-extension/bridgeHost.test.ts": {
+      "gitBlob": "ffc7b22ea5cc1a6e065d5aace7c34829ada4eb81",
+      "sha256": "60b2662b6597401cd5d7182dae526ac10981ad414dc8d3304f045f1b3fa9156e"
+    },
+    "tests/mcp-extension/bridgeProtocol.test.ts": {
+      "gitBlob": "56dc7f40d1d78d430c36cca074d4379bed4ccc45",
+      "sha256": "62227ed3b076c2e18613feeb4c3bcb834a0a1a336178430694ebdf7e1aa98f02"
+    },
+    "tests/mcp-extension/commandQueue.test.ts": {
+      "gitBlob": "19fb97efed01491e619dc759221919c56d71610b",
+      "sha256": "d7ef19e9c564bdbfa8acf2449b6b88a7b498223e5f2ab58d55b073a720c622f7"
+    },
+    "tests/mcp-extension/controlTools.test.ts": {
+      "gitBlob": "faee6cee8ece7e88c182d23a45da283b732c6bd7",
+      "sha256": "11a504ee8cb81834719cd472f753c3722f85d46bd057870dc907c6c429dc9360"
+    },
+    "tests/mcp-extension/dapGateway.test.ts": {
+      "gitBlob": "72580947b7554eb405f7351006b2bcc0f0de3a62",
+      "sha256": "dc7d768aaaf0117fb7d70bd0c5ca1ffe4401ce279fcfb26fd7571dc201dd4e9b"
+    },
+    "tests/mcp-extension/debugToolsHarness.ts": {
+      "gitBlob": "433404437f00ad86b2408b2d56d1de52632e8ef5",
+      "sha256": "75c9effe30d09f4c909bec797ea0ae12472c6dafa1ce659aa8e2181b5a556fc7"
+    },
+    "tests/mcp-extension/dependencyAdapter.test.ts": {
+      "gitBlob": "6f03772b89622e2fef383f8da616333e003d010b",
+      "sha256": "2938caaa35662462361fa5b63f1d1a359035e17ad2e98710e45b26cc4a76c581"
+    },
+    "tests/mcp-extension/eventBuffer.test.ts": {
+      "gitBlob": "69789be7f655afe2fba9450ef3ff9e0edc0ef3c2",
+      "sha256": "98652fc2e97b73a452968a9e27fcff9b4d964b082c0bfeb31cd90a81361caed8"
+    },
+    "tests/mcp-extension/eventTools.test.ts": {
+      "gitBlob": "664e8605e784831aa4807006cadaa05d125caf05",
+      "sha256": "6ce6f5446b38f943022a9f45792ab664c1654004a7f41424b5e9d5e18d3b171e"
+    },
+    "tests/mcp-extension/extension.test.ts": {
+      "gitBlob": "62abf64758782645f2b2c96aa415de0c5f20884c",
+      "sha256": "bcb0dcfdadc4c81190f155322eee1240575cd8ae1f1b3b82d133350996481794"
+    },
+    "tests/mcp-extension/inspectionTools.test.ts": {
+      "gitBlob": "d98a75fb489f44f8900972c8a3ab5274c43c52d5",
+      "sha256": "07c91bf8413af44539afdabf55759f01344794c805a9625527402b9f18c81c4d"
+    },
+    "tests/mcp-extension/lifecycleTools.test.ts": {
+      "gitBlob": "60fe88bfa86c1399862a0ad596388fc6e909df03",
+      "sha256": "5a54bac899132b910081c720a94b4b46c09b33fd5df2132a079edb4e020dd8f0"
+    },
+    "tests/mcp-extension/mcpProvider.test.ts": {
+      "gitBlob": "5e1161d0e06542b96ac3277843d29f4d7beb72b8",
+      "sha256": "0a83dc7ce7b3b665043286896d042b291b8e924f4a8aec06d980195c824bba6f"
+    },
+    "tests/mcp-extension/referenceStore.test.ts": {
+      "gitBlob": "116a70bc144f6ca67752a33bcd6095f430822333",
+      "sha256": "d6400efbee26aa43e9156a246051347c631a291c9f55e96571741d3ee35f9ed4"
+    },
+    "tests/mcp-extension/sessionRegistry.test.ts": {
+      "gitBlob": "83868097f7d2e73121c36d1392f2c3522fff57c8",
+      "sha256": "047bb619689189584d45278f97b282e83488312f50f4e741ce60d9356ff78f3b"
+    },
+    "tests/mcp-extension/stateProjector.test.ts": {
+      "gitBlob": "394f402bf749049e3bf3b177e2eaa84782187fd1",
+      "sha256": "f3c4e5967c950085a6f3e7f441ed1b8a241c019ff126cc9ccca4e73670132bbe"
+    },
+    "tests/mcp-extension/vscode-1.101-boundary.ts": {
+      "gitBlob": "c12ad38b77b3254aed35ccb12b03f7a17f1ca0b8",
+      "sha256": "16e925c15a1dbbb74d352f18cfdd331bb1d3f455827debf9bf1aae86521dd869"
+    },
+    "tests/mcp-server/bridgeClient.test.ts": {
+      "gitBlob": "3d9bcd09fe552bf5fcffa71cbf9425802ce33710",
+      "sha256": "627cf63e4861f216394efeb75eb41b76967a9e91788cefdbea1a319d23dac698"
+    },
+    "tests/mcp-server/stdioServer.test.ts": {
+      "gitBlob": "2080356793a398cc42df4600012dc0896dd46f83",
+      "sha256": "67047e048879597750a030eb114e48322d6408a4e42a904760574d95feb03463"
+    },
+    "tests/mcp-server/toolCatalog.test.ts": {
+      "gitBlob": "848ec8ced8875a8d1c7f6807c3e893f5d4e486a1",
+      "sha256": "137dc04a98b7abf85b19ed6c29f73a9b0493cf0a7555cb83c981738c83f4fb54"
+    },
+    "tests/package/mcp-smoke-stdout.test.mjs": {
+      "gitBlob": "74d38de75bfc4a838c2733eaa9dee874ea5fb471",
+      "sha256": "70119b6a48adb91442bd8ce9097ebe4b068857dbcda9f5fdf1c710f2a786418d"
+    },
+    "tests/package/mcp-vsix.test.mjs": {
+      "gitBlob": "e829393d23119a5043e81571c64e461a8aa77dcd",
+      "sha256": "2edbc42c72c93c39c5ea14b02abe7b26dfa26a746d32733f8cd3f4c953ac6004"
+    }
+  }
+}

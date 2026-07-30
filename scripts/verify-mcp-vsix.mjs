@@ -100,7 +100,7 @@ const packagedInventoryText = files
   .get("extension/runtime-inventory.json")
   .bytes.toString("utf8");
 const committedInventoryText = await fs.readFile(
-  path.join(repositoryRoot, "mcp-extension", "runtime-inventory.json"),
+  path.join(repositoryRoot, "runtime-inventory.json"),
   "utf8",
 );
 if (

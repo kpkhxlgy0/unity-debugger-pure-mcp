@@ -68,18 +68,18 @@ import {
   BridgeHost,
   type BridgeDescriptor,
   type BridgeToolHandler,
-} from "../../mcp-extension/src/bridge/bridgeHost.js";
-import { TOOL_NAMES, type ToolName } from "../../mcp-extension/src/bridge/protocol.js";
+} from "../../src/bridge/bridgeHost.js";
+import { TOOL_NAMES, type ToolName } from "../../src/bridge/protocol.js";
 
 const repositoryRoot = path.resolve(import.meta.dirname, "../..");
-const bundledServer = path.join(repositoryRoot, "mcp-server", "dist", "server.cjs");
+const bundledServer = path.join(repositoryRoot, "server", "dist", "server.cjs");
 const workspaceRoot = repositoryRoot;
 const sourcePath = path.join(workspaceRoot, "package.json");
-const extensionModulePath = "../../mcp-extension/src/extension.js";
+const extensionModulePath = "../../src/extension.js";
 
 beforeAll(() => {
   const built = spawnSync(process.execPath, ["esbuild.mjs"], {
-    cwd: path.join(repositoryRoot, "mcp-server"),
+    cwd: path.join(repositoryRoot, "server"),
     encoding: "utf8",
     timeout: 30_000,
     windowsHide: true,
@@ -247,7 +247,7 @@ describe("packaged MCP companion simulated session", () => {
     const boundary = {
       platform: "win32",
       arch: "x64",
-      executable: path.join(repositoryRoot, "mcp-extension", "dist", "mcp-bridge.exe"),
+      executable: path.join(repositoryRoot, "dist", "mcp-bridge.exe"),
       version: "0.1.0",
       hasRequiredCapabilities: () => true,
       getDebuggerExtension: () => ({ activate: async () => debuggerApi }),

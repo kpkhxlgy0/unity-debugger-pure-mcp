@@ -1,0 +1,7 @@
+{
+  "main": "server/dist/server.cjs",
+  "mainFormat": "commonjs",
+  "output": "dist/mcp-bridge.exe",
+  "useSnapshot": false,
+  "useCodeCache": false
+}

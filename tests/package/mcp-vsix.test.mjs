@@ -12,11 +12,7 @@ const artifactPath = path.join(
   "dist",
   "unity-debugger-pure-mcp-0.1.0.vsix",
 );
-const inventoryPath = path.join(
-  repositoryRoot,
-  "mcp-extension",
-  "runtime-inventory.json",
-);
+const inventoryPath = path.join(repositoryRoot, "runtime-inventory.json");
 const verifierPath = path.join(repositoryRoot, "scripts", "verify-mcp-vsix.mjs");
 
 test("companion SEA and VSIX satisfy the isolated production contract", {
@@ -35,7 +31,7 @@ test("companion SEA and VSIX satisfy the isolated production contract", {
         "npm-cli.js",
       ),
       "run",
-      "package:mcp",
+      "package",
     ],
     {
       cwd: repositoryRoot,
@@ -115,7 +111,6 @@ test("companion SEA and VSIX satisfy the isolated production contract", {
 
   const executablePath = path.join(
     repositoryRoot,
-    "mcp-extension",
     "dist",
     "mcp-bridge.exe",
   );

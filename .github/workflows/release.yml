@@ -1,0 +1,51 @@
+name: Release
+
+"on":
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 26.5.0
+          cache: npm
+      - run: npm ci
+      - name: Verify tag and manifest version
+        shell: pwsh
+        run: |
+          $manifest = Get-Content package.json -Raw | ConvertFrom-Json
+          $expected = "v$($manifest.version)"
+          if ("${{ github.ref_name }}" -ne $expected) {
+            throw "Tag must equal $expected"
+          }
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run package
+      - name: Verify the audited VSIX directly
+        run: node scripts/verify-mcp-vsix.mjs dist/unity-debugger-pure-mcp-0.1.0.vsix
+      - name: Write release checksum
+        shell: pwsh
+        run: |
+          $artifact = "dist/unity-debugger-pure-mcp-0.1.0.vsix"
+          $sidecar = "dist/unity-debugger-pure-mcp-0.1.0.vsix.sha256"
+          $digest = (Get-FileHash -Algorithm SHA256 -LiteralPath $artifact).Hash.ToLowerInvariant()
+          "$digest  unity-debugger-pure-mcp-0.1.0.vsix" |
+            Set-Content -LiteralPath $sidecar -Encoding ascii -NoNewline
+      - name: Create GitHub release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${{ github.ref_name }}" `
+            dist/unity-debugger-pure-mcp-0.1.0.vsix `
+            dist/unity-debugger-pure-mcp-0.1.0.vsix.sha256 `
+            --verify-tag `
+            --generate-notes

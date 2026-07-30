@@ -21,25 +21,23 @@ const repositoryRoot = path.resolve(
 );
 const outputPath = path.join(
   repositoryRoot,
-  "mcp-extension",
   "dist",
   "mcp-bridge.exe",
 );
 await fs.mkdir(path.dirname(outputPath), { recursive: true });
 
-run(process.execPath, ["esbuild.mjs"], path.join(repositoryRoot, "mcp-server"));
+run(process.execPath, ["esbuild.mjs"], path.join(repositoryRoot, "server"));
 run(
   process.execPath,
-  ["--build-sea", "mcp-server/sea-config.json"],
+  ["--build-sea", "server/sea-config.json"],
   repositoryRoot,
 );
 
 const executable = await fs.readFile(outputPath);
 verifyAmd64Pe(executable);
 const sha256 = createHash("sha256").update(executable).digest("hex");
-await verifyReviewedInventory(sha256);
-
 await smokeTest(outputPath);
+await verifyReviewedInventory(sha256);
 console.log(`MCP bridge SEA built and smoke-tested: ${path.relative(repositoryRoot, outputPath)}`);
 
 function run(command, args, cwd) {
@@ -245,7 +243,6 @@ function verifyAmd64Pe(bytes) {
 async function verifyReviewedInventory(sha256) {
   const inventoryPath = path.join(
     repositoryRoot,
-    "mcp-extension",
     "runtime-inventory.json",
   );
   let inventory;
@@ -260,7 +257,8 @@ async function verifyReviewedInventory(sha256) {
     inventory.sha256 !== sha256
   ) {
     throw new Error(
-      "MCP bridge differs from the reviewed Node version or SHA-256 inventory.",
+      "MCP bridge differs from the reviewed Node version or SHA-256 inventory. " +
+        `Candidate SHA-256: ${sha256}.`,
     );
   }
 }
