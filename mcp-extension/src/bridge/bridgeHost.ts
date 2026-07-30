@@ -16,10 +16,11 @@ import {
   type ServerFrame,
   type ToolName,
 } from "./protocol.js";
-import { FrameDecoder, encodeFrame } from "./framing.js";
+import { BridgeFrameTooLargeError, FrameDecoder, encodeFrame } from "./framing.js";
 import {
   STRUCTURED_TOOL_ERROR_SCHEMA,
   dapFailureError,
+  resultTooLargeError,
   type StructuredToolError,
 } from "../tools/errors.js";
 
@@ -67,9 +68,15 @@ interface HostConnection {
   readonly connectionId: string;
   readonly abortController: AbortController;
   readonly decoder: FrameDecoder;
+  readonly requests: Map<string, HostRequest>;
   helloTimeout: NodeJS.Timeout | undefined;
   authenticated: boolean;
   disconnected: boolean;
+}
+
+interface HostRequest {
+  readonly abortController: AbortController;
+  readonly removeConnectionAbortListener: () => void;
 }
 
 const SYSTEM_CLOCK: BridgeClock = {
@@ -282,6 +289,7 @@ export class BridgeHost {
       connectionId: this.#randomUUID(),
       abortController: new AbortController(),
       decoder: new FrameDecoder(),
+      requests: new Map(),
       helloTimeout: undefined,
       authenticated: false,
       disconnected: false,
@@ -336,6 +344,10 @@ export class BridgeHost {
         this.#write(connection, { type: "helloAck", protocolVersion: 1 });
         continue;
       }
+      if (frame.type === "cancel") {
+        connection.requests.get(frame.id)?.abortController.abort();
+        continue;
+      }
       if (frame.type !== "request") {
         this.#terminate(connection);
         return;
@@ -350,10 +362,24 @@ export class BridgeHost {
     name: ToolName,
     input: unknown,
   ): Promise<void> {
+    if (connection.disconnected) {
+      return;
+    }
+    const abortController = new AbortController();
+    const onConnectionAbort = (): void => abortController.abort();
+    const removeConnectionAbortListener = (): void => {
+      connection.abortController.signal.removeEventListener("abort", onConnectionAbort);
+    };
+    const request: HostRequest = { abortController, removeConnectionAbortListener };
+    connection.requests.set(id, request);
+    connection.abortController.signal.addEventListener("abort", onConnectionAbort, { once: true });
+    if (connection.abortController.signal.aborted) {
+      onConnectionAbort();
+    }
     try {
       const result = await this.#handler.callTool({
         connectionId: connection.connectionId,
-        signal: connection.abortController.signal,
+        signal: abortController.signal,
         name,
         input,
       });
@@ -364,6 +390,11 @@ export class BridgeHost {
         id,
         error: structuredErrorFrom(error),
       });
+    } finally {
+      removeConnectionAbortListener();
+      if (connection.requests.get(id) === request) {
+        connection.requests.delete(id);
+      }
     }
   }
 
@@ -378,7 +409,19 @@ export class BridgeHost {
     }
     try {
       connection.socket.write(encodeFrame(validated.data));
-    } catch {
+    } catch (error) {
+      if (
+        error instanceof BridgeFrameTooLargeError &&
+        frame.type === "response" &&
+        "result" in frame
+      ) {
+        this.#write(connection, {
+          type: "response",
+          id: frame.id,
+          error: resultTooLargeError(),
+        });
+        return;
+      }
       this.#terminate(connection);
     }
   }
@@ -396,6 +439,11 @@ export class BridgeHost {
     this.#clearHelloTimeout(connection);
     this.#connections.delete(connection);
     connection.abortController.abort();
+    for (const request of connection.requests.values()) {
+      request.removeConnectionAbortListener();
+      request.abortController.abort();
+    }
+    connection.requests.clear();
     if (connection.authenticated) {
       let cleanup: Promise<void>;
       try {

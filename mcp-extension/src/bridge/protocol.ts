@@ -37,6 +37,7 @@ export type ToolName = (typeof TOOL_NAMES)[number];
 
 export type ClientFrame =
   | { readonly type: "hello"; readonly protocolVersion: 1; readonly token: string }
+  | { readonly type: "cancel"; readonly id: string }
   | {
       readonly type: "request";
       readonly id: string;
@@ -69,6 +70,11 @@ const REQUEST_SCHEMA = z.strictObject({
   }),
 });
 
+const CANCEL_SCHEMA = z.strictObject({
+  type: z.literal("cancel"),
+  id: z.string().min(1),
+});
+
 const HELLO_ACK_SCHEMA = z.strictObject({
   type: z.literal("helloAck"),
   protocolVersion: z.literal(BRIDGE_PROTOCOL_VERSION),
@@ -90,6 +96,7 @@ const RESPONSE_SCHEMA = z.strictObject({
 
 export const CLIENT_FRAME_SCHEMA: z.ZodType<ClientFrame> = z.discriminatedUnion("type", [
   HELLO_SCHEMA,
+  CANCEL_SCHEMA,
   REQUEST_SCHEMA,
 ]);
 

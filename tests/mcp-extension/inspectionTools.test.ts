@@ -336,4 +336,53 @@ describe("ToolDispatcher inspection and evaluation", () => {
     expect(evaluation).toMatchObject({ truncated: true });
     expect(evaluation.type.endsWith("\ud83d")).toBe(false);
   });
+
+  it("publishes only a stable variables prefix within the shared UTF-8 result budget", async () => {
+    const escapedMultibyte = "\u0001汉".repeat(2_048);
+    const harness = debugHarness({
+      customRequest: async (command) => command === "variables"
+        ? {
+            variables: Array.from({ length: 100 }, (_, index) => ({
+              name: `value-${index}`,
+              value: escapedMultibyte,
+              type: escapedMultibyte,
+              variablesReference: 1_000 + index,
+            })),
+          }
+        : defaultDapResponse(command),
+    });
+
+    const snapshot = await harness.dispatcher.call("unity_debug_snapshot", {
+      sessionRef: harness.selection.sessionRef,
+    }) as {
+      truncated?: true;
+      variables: Array<{ name: string; variablesRef?: string }>;
+    };
+
+    expect(Buffer.byteLength(JSON.stringify(snapshot), "utf8")).toBeLessThanOrEqual(786_432);
+    expect(snapshot.truncated).toBe(true);
+    expect(snapshot.variables.length).toBeGreaterThan(0);
+    expect(snapshot.variables.length).toBeLessThan(100);
+    expect(snapshot.variables.map(({ name }) => name)).toEqual(
+      Array.from({ length: snapshot.variables.length }, (_, index) => `value-${index}`),
+    );
+    expect(harness.references.activeReferenceCount).toBe(countPublishedReferences(snapshot));
+  });
 });
+
+function countPublishedReferences(value: unknown): number {
+  if (Array.isArray(value)) {
+    return value.reduce((count, entry) => count + countPublishedReferences(entry), 0);
+  }
+  if (typeof value !== "object" || value === null) {
+    return 0;
+  }
+  return Object.entries(value).reduce(
+    (count, [key, entry]) => count + (
+      key === "threadRef" || key === "frameRef" || key === "variablesRef"
+        ? 1
+        : countPublishedReferences(entry)
+    ),
+    0,
+  );
+}

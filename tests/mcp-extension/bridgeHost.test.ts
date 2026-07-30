@@ -12,8 +12,11 @@ import {
   BridgeHost,
   type BridgeConnectionContext,
   type BridgeDescriptor,
+  type BridgeToolRequest,
 } from "../../mcp-extension/src/bridge/bridgeHost.js";
 import { FrameDecoder, encodeFrame } from "../../mcp-extension/src/bridge/framing.js";
+import { BridgeClient } from "../../mcp-server/src/bridgeClient.js";
+import { debugHarness } from "./debugToolsHarness.js";
 
 class FrameReader {
   readonly #decoder = new FrameDecoder();
@@ -86,12 +89,7 @@ afterEach(async () => {
 });
 
 function createHost(
-  callTool: (request: {
-    readonly connectionId: string;
-    readonly signal: AbortSignal;
-    readonly name: "unity_debug_status";
-    readonly input: unknown;
-  }) => Promise<unknown> = async () => ({ ok: true }),
+  callTool: (request: BridgeToolRequest) => Promise<unknown> = async () => ({ ok: true }),
   onDisconnect?: (context: BridgeConnectionContext) => void | Promise<void>,
 ): BridgeHost {
   const host = new BridgeHost({
@@ -382,6 +380,170 @@ describe("BridgeHost", () => {
       ]),
     );
     expect(callTool).toHaveBeenCalledTimes(2);
+  });
+
+  it("cancels a queued side effect across the real client pipe before DAP without cancelling a concurrent call", async () => {
+    const harness = debugHarness();
+    let releaseBlocker!: () => void;
+    const blocker = harness.queue.write(harness.selection.sessionRef, async () =>
+      new Promise<void>((resolve) => { releaseBlocker = resolve; })
+    );
+    await Promise.resolve();
+    let entered!: () => void;
+    const requestEntered = new Promise<void>((resolve) => { entered = resolve; });
+    let observedAbort!: () => void;
+    const hostObservedAbort = new Promise<void>((resolve) => { observedAbort = resolve; });
+    let hostCompleted!: () => void;
+    const cancelledHostCallCompleted = new Promise<void>((resolve) => { hostCompleted = resolve; });
+    const host = createHost(async (request) => {
+      if (request.name === "unity_debug_continue") {
+        request.signal.addEventListener("abort", observedAbort, { once: true });
+        entered();
+        try {
+          return await harness.dispatcher.call(
+            request.name,
+            request.input,
+            request.connectionId,
+            request.signal,
+          );
+        } finally {
+          hostCompleted();
+        }
+      }
+      return harness.dispatcher.call(
+        request.name,
+        request.input,
+        request.connectionId,
+        request.signal,
+      );
+    });
+    const client = await BridgeClient.connect(await host.listen());
+    const controller = new AbortController();
+    const cancelled = client.callTool("unity_debug_continue", {
+      sessionRef: harness.selection.sessionRef,
+    }, controller.signal);
+    await requestEntered;
+
+    try {
+      const concurrent = client.callTool("unity_debug_status", {
+        sessionRef: harness.selection.sessionRef,
+      });
+      controller.abort();
+      await expect(cancelled).rejects.toMatchObject({ detail: { code: "CANCELLED" } });
+      const crossing = await Promise.race([
+        hostObservedAbort.then(() => "aborted" as const),
+        new Promise<"timed-out">((resolve) => setTimeout(() => resolve("timed-out"), 200)),
+      ]);
+      releaseBlocker();
+      await blocker;
+      await cancelledHostCallCompleted;
+
+      expect(crossing).toBe("aborted");
+      await expect(concurrent).resolves.toMatchObject({
+        session: { sessionRef: harness.selection.sessionRef },
+        state: "stopped",
+      });
+      expect(harness.customRequest).not.toHaveBeenCalled();
+    } finally {
+      client.close();
+    }
+  });
+
+  it("cancels an event wait across the real client pipe and clears its timer", async () => {
+    const harness = debugHarness();
+    let entered!: () => void;
+    const requestEntered = new Promise<void>((resolve) => { entered = resolve; });
+    let hostCompleted!: () => void;
+    const hostCallCompleted = new Promise<void>((resolve) => { hostCompleted = resolve; });
+    const host = createHost(async (request) => {
+      if (request.name === "unity_debug_wait_for_event") {
+        entered();
+        try {
+          return await harness.dispatcher.call(
+            request.name,
+            request.input,
+            request.connectionId,
+            request.signal,
+          );
+        } finally {
+          hostCompleted();
+        }
+      }
+      return harness.dispatcher.call(
+        request.name,
+        request.input,
+        request.connectionId,
+        request.signal,
+      );
+    });
+    const client = await BridgeClient.connect(await host.listen());
+    const clearTimeout = vi.spyOn(globalThis, "clearTimeout");
+    const controller = new AbortController();
+    const wait = client.callTool("unity_debug_wait_for_event", {
+      sessionRef: harness.selection.sessionRef,
+      afterSequence: 0,
+      kinds: ["output"],
+      timeoutMs: 60_000,
+    }, controller.signal);
+    await requestEntered;
+    await Promise.resolve();
+
+    try {
+      controller.abort();
+      await expect(wait).rejects.toMatchObject({ detail: { code: "CANCELLED" } });
+      const crossing = await Promise.race([
+        hostCallCompleted.then(() => "cancelled" as const),
+        new Promise<"timed-out">((resolve) => setTimeout(() => resolve("timed-out"), 200)),
+      ]);
+
+      expect(crossing).toBe("cancelled");
+      expect(clearTimeout).toHaveBeenCalled();
+      await expect(client.callTool("unity_debug_status", {
+        sessionRef: harness.selection.sessionRef,
+      })).resolves.toMatchObject({ state: "stopped" });
+    } finally {
+      clearTimeout.mockRestore();
+      client.close();
+    }
+  });
+
+  it("ignores unknown and late cancellation IDs without closing the authenticated connection", async () => {
+    const descriptor = await createHost(async ({ input }) => input).listen();
+    const socket = await openSocket(descriptor);
+    sockets.add(socket);
+    const reader = new FrameReader(socket);
+    socket.write(encodeFrame({ type: "hello", protocolVersion: 1, token: descriptor.token }));
+    await reader.next();
+
+    socket.write(Buffer.concat([
+      encodeFrame({ type: "cancel", id: "unknown-request" }),
+      encodeFrame({
+        type: "request",
+        id: "completed-request",
+        method: "callTool",
+        params: { name: "unity_debug_status", input: { ordinal: 1 } },
+      }),
+    ]));
+    await expect(reader.next()).resolves.toEqual({
+      type: "response",
+      id: "completed-request",
+      result: { ordinal: 1 },
+    });
+
+    socket.write(Buffer.concat([
+      encodeFrame({ type: "cancel", id: "completed-request" }),
+      encodeFrame({
+        type: "request",
+        id: "next-request",
+        method: "callTool",
+        params: { name: "unity_debug_status", input: { ordinal: 2 } },
+      }),
+    ]));
+    await expect(reader.next()).resolves.toEqual({
+      type: "response",
+      id: "next-request",
+      result: { ordinal: 2 },
+    });
   });
 
   it("aborts the authenticated connection and invokes its disconnect hook on host close", async () => {

@@ -277,6 +277,30 @@ describe("Unity debugger MCP tool catalog", () => {
     expect(bridge.callTool).toHaveBeenCalledTimes(TOOL_NAMES.length);
     expect(bridge.callTool.mock.calls.every((call) => call[2] instanceof AbortSignal)).toBe(true);
 
+    const collectionTools = [
+      "unity_debug_list_targets",
+      "unity_debug_list_breakpoints",
+      "unity_debug_threads",
+      "unity_debug_stack_trace",
+      "unity_debug_scopes",
+      "unity_debug_variables",
+      "unity_debug_snapshot",
+    ] as const;
+    for (const name of collectionTools) {
+      const schema = TOOL_DEFINITIONS.find((definition) => definition.name === name)!.successSchema;
+      expect(schema.safeParse({ ...SUCCESS_CASES[name].result, truncated: true }).success, name)
+        .toBe(true);
+      expect(schema.safeParse({ ...SUCCESS_CASES[name].result, truncated: false }).success, name)
+        .toBe(false);
+    }
+    const statusSchema = TOOL_DEFINITIONS.find(({ name }) =>
+      name === "unity_debug_status"
+    )!.successSchema;
+    expect(statusSchema.safeParse({
+      ...SUCCESS_CASES.unity_debug_status.result,
+      truncated: true,
+    }).success).toBe(false);
+
     const threadsSchema = TOOL_DEFINITIONS.find(({ name }) => name === "unity_debug_threads")!.successSchema;
     expect(threadsSchema.safeParse({
       ...SUCCESS_CASES.unity_debug_threads.result,

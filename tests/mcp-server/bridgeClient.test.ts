@@ -49,12 +49,7 @@ async function startHost(
 }
 
 function createTestHost(
-  callTool: (request: {
-    readonly connectionId: string;
-    readonly signal: AbortSignal;
-    readonly name: "unity_debug_status";
-    readonly input: unknown;
-  }) => Promise<unknown>,
+  callTool: (request: BridgeToolRequest) => Promise<unknown>,
 ): BridgeHost {
   const host = new BridgeHost({ handler: { callTool } });
   hosts.add(host);
@@ -197,6 +192,37 @@ describe("BridgeClient", () => {
     releaseFirst();
     await expect(client.callTool("unity_debug_status", { ordinal: 2 })).resolves.toEqual({
       ordinal: 2,
+    });
+  });
+
+  it("returns a structured size error for an oversized aggregate and keeps the connection usable", async () => {
+    const escapedMultibyte = "\u0001汉".repeat(2_048);
+    const oversizedVariables = Array.from({ length: 100 }, (_, index) => ({
+      name: `value-${index}`,
+      value: escapedMultibyte,
+    }));
+    let calls = 0;
+    const { descriptor } = await startHost(async () => {
+      calls += 1;
+      return calls === 1
+        ? {
+            sessionRef: "AQEBAQEBAQEBAQEBAQEBAQ",
+            state: "stopped",
+            stopGeneration: 1,
+            eventSequence: 1,
+            variables: oversizedVariables,
+          }
+        : { session: null, state: "not-attached", eventSequence: 0 };
+    });
+    const client = await connect(descriptor);
+
+    await expect(client.callTool("unity_debug_variables", {})).rejects.toMatchObject({
+      detail: { code: "RESULT_TOO_LARGE", retryable: false },
+    });
+    await expect(client.callTool("unity_debug_status", {})).resolves.toEqual({
+      session: null,
+      state: "not-attached",
+      eventSequence: 0,
     });
   });
 

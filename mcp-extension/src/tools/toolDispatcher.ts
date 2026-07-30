@@ -73,6 +73,7 @@ import {
   type VariablesInput,
   type WaitForEventInput,
 } from "./schemas.js";
+import { boundedCollectionResult } from "./resultBudget.js";
 
 const DEFAULT_CLIENT_ID = "default";
 const TARGET_CAPABILITY_TTL_MS = 60_000;
@@ -230,9 +231,12 @@ export class ToolDispatcher {
           );
         case "unity_debug_list_breakpoints":
           LIST_BREAKPOINTS_INPUT_SCHEMA.parse(input);
-          return Object.freeze({
-            breakpoints: this.#breakpoints.list(this.#workspaceRoots()),
-          });
+          return boundedCollectionResult(
+            Object.freeze({
+              breakpoints: this.#breakpoints.list(this.#workspaceRoots()),
+            }),
+            ["breakpoints"],
+          );
         case "unity_debug_add_breakpoint": {
           const parsed = ADD_BREAKPOINT_INPUT_SCHEMA.parse(input);
           return Object.freeze({
@@ -374,7 +378,7 @@ export class ToolDispatcher {
       throw workspaceUntrustedError();
     }
     const freshRootMap = workspaceRootMap(this.#workspaceRoots());
-    const capabilities = new Map<string, PublicEditorTarget>();
+    const targetIds = new Set<string>();
     const targets: PublicEditorTarget[] = [];
     for (const target of discovered) {
       const workspaceRootKey = canonicalPathKey(target.workspaceRoot);
@@ -386,18 +390,26 @@ export class ToolDispatcher {
         continue;
       }
       const safeTarget = safeTargetView(target, currentWorkspaceRoot);
-      if (capabilities.has(safeTarget.targetId)) {
+      if (targetIds.has(safeTarget.targetId)) {
         throw new Error("Debugger dependency returned duplicate target references.");
       }
-      capabilities.set(safeTarget.targetId, safeTarget);
+      targetIds.add(safeTarget.targetId);
       targets.push(safeTarget);
     }
+    const result = boundedCollectionResult(
+      Object.freeze({ targets: Object.freeze(targets) }),
+      ["targets"],
+    );
+    const publishedTargets = result.targets as readonly PublicEditorTarget[];
+    const capabilities = new Map(
+      publishedTargets.map((target) => [target.targetId, target] as const),
+    );
     client.targets = {
       expiresAt: issuedAt + TARGET_CAPABILITY_TTL_MS,
       byTargetId: capabilities,
     };
     client.targetOperation = undefined;
-    return Object.freeze({ targets: Object.freeze(targets) });
+    return result as Readonly<{ targets: readonly PublicEditorTarget[] }>;
   }
 
   async #attach(
@@ -590,7 +602,7 @@ export class ToolDispatcher {
       const threads = await this.#dap.threads(context.session);
       this.#assertRequestAuthorized(clientId, client, signal);
       const freshState = this.#recheckStopped(context);
-      return Object.freeze({
+      const result = Object.freeze({
         ...this.#resultMetadata(selection.sessionRef, freshState),
         threads: Object.freeze(threads.map((thread) => this.#threadView(
           selection.sessionRef,
@@ -598,6 +610,7 @@ export class ToolDispatcher {
           thread,
         ))),
       });
+      return this.#boundedReferenceResult(result, ["threads"]);
     });
   }
 
@@ -627,7 +640,7 @@ export class ToolDispatcher {
       this.#assertRequestAuthorized(clientId, client, signal);
       const freshState = this.#recheckStopped(context);
       const frames = stack.stackFrames.slice(0, input.levels);
-      return Object.freeze({
+      const result = Object.freeze({
         ...this.#resultMetadata(selection.sessionRef, freshState),
         totalFrames: stack.totalFrames ?? frames.length,
         frames: Object.freeze(frames.map((frame) => this.#frameView(
@@ -636,6 +649,7 @@ export class ToolDispatcher {
           frame,
         ))),
       });
+      return this.#boundedReferenceResult(result, ["frames"]);
     });
   }
 
@@ -659,7 +673,7 @@ export class ToolDispatcher {
       const scopes = await this.#dap.scopes(context.session, frameId);
       this.#assertRequestAuthorized(clientId, client, signal);
       const freshState = this.#recheckStopped(context);
-      return Object.freeze({
+      const result = Object.freeze({
         ...this.#resultMetadata(selection.sessionRef, freshState),
         scopes: Object.freeze(scopes.map((scope) => this.#scopeView(
           selection.sessionRef,
@@ -667,6 +681,7 @@ export class ToolDispatcher {
           scope,
         ))),
       });
+      return this.#boundedReferenceResult(result, ["scopes"]);
     });
   }
 
@@ -694,7 +709,7 @@ export class ToolDispatcher {
       );
       this.#assertRequestAuthorized(clientId, client, signal);
       const freshState = this.#recheckStopped(context);
-      return Object.freeze({
+      const result = Object.freeze({
         ...this.#resultMetadata(selection.sessionRef, freshState),
         variables: Object.freeze(variables.slice(0, input.count).map((variable) =>
           this.#variableView(
@@ -704,6 +719,7 @@ export class ToolDispatcher {
           )
         )),
       });
+      return this.#boundedReferenceResult(result, ["variables"]);
     });
   }
 
@@ -753,7 +769,7 @@ export class ToolDispatcher {
       // has succeeded and the generation has passed its final check.
       this.#assertRequestAuthorized(clientId, client, signal);
       const freshState = this.#recheckStopped(context);
-      return Object.freeze({
+      const result = Object.freeze({
         ...this.#resultMetadata(selection.sessionRef, freshState),
         reason: freshState.reason,
         thread: selectedThread === undefined
@@ -779,6 +795,7 @@ export class ToolDispatcher {
           variable,
         ))),
       });
+      return this.#boundedReferenceResult(result, ["frames", "scopes", "variables"]);
     });
   }
 
@@ -1101,6 +1118,23 @@ export class ToolDispatcher {
     });
   }
 
+  #boundedReferenceResult(
+    result: Readonly<Record<string, unknown>>,
+    collectionKeys: readonly string[],
+  ): Readonly<Record<string, unknown>> {
+    const bounded = boundedCollectionResult(result, collectionKeys);
+    if (bounded === result) {
+      return result;
+    }
+    const published = collectOpaqueReferences(bounded);
+    for (const reference of collectOpaqueReferences(result)) {
+      if (!published.has(reference)) {
+        this.#references.revoke(reference);
+      }
+    }
+    return bounded;
+  }
+
   #assertControlPhase(
     sessionRef: string,
     state: DebugSessionState,
@@ -1408,6 +1442,32 @@ export class ToolDispatcher {
       throw workspaceUntrustedError();
     }
   }
+}
+
+function collectOpaqueReferences(
+  value: unknown,
+  references = new Set<string>(),
+): Set<string> {
+  if (Array.isArray(value)) {
+    for (const entry of value) {
+      collectOpaqueReferences(entry, references);
+    }
+    return references;
+  }
+  if (typeof value !== "object" || value === null) {
+    return references;
+  }
+  for (const [key, entry] of Object.entries(value)) {
+    if (
+      (key === "threadRef" || key === "frameRef" || key === "variablesRef") &&
+      typeof entry === "string"
+    ) {
+      references.add(entry);
+    } else {
+      collectOpaqueReferences(entry, references);
+    }
+  }
+  return references;
 }
 
 function notAttachedStatus(): NotAttachedStatus {

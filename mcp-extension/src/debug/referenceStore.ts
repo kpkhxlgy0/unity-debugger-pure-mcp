@@ -96,6 +96,20 @@ export class ReferenceStore {
     this.#referencesBySession.delete(sessionId);
   }
 
+  /** Revokes one unpublished reference without rewinding the lifetime counter. */
+  public revoke(reference: string): void {
+    const record = this.#records.get(reference);
+    if (record === undefined) {
+      return;
+    }
+    this.#records.delete(reference);
+    const references = this.#referencesBySession.get(record.sessionId);
+    references?.delete(reference);
+    if (references?.size === 0) {
+      this.#referencesBySession.delete(record.sessionId);
+    }
+  }
+
   #nextReference(): string {
     this.#counter += 1n;
     const counter = encodeCounter(this.#counter);

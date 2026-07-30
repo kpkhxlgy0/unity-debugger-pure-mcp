@@ -103,6 +103,9 @@ const STOPPED_METADATA_SHAPE = {
   stopGeneration: SAFE_INTEGER_SCHEMA,
   eventSequence: SAFE_INTEGER_SCHEMA,
 } as const;
+const COLLECTION_TRUNCATION_SHAPE = {
+  truncated: z.literal(true).optional(),
+} as const;
 
 const ATTACHED_STATUS_SCHEMA = z.strictObject({
   session: SESSION_SELECTION_SCHEMA,
@@ -237,6 +240,7 @@ const EVENT_SCHEMA = z.discriminatedUnion("kind", [
 const RESULT_SCHEMAS = Object.freeze({
   unity_debug_list_targets: z.strictObject({
     targets: z.array(TARGET_SCHEMA),
+    ...COLLECTION_TRUNCATION_SHAPE,
   }),
   unity_debug_attach: ATTACHED_STATUS_SCHEMA.extend({
     session: TRACKED_SESSION_SELECTION_SCHEMA,
@@ -249,6 +253,7 @@ const RESULT_SCHEMAS = Object.freeze({
   }),
   unity_debug_list_breakpoints: z.strictObject({
     breakpoints: z.array(z.union([SOURCE_BREAKPOINT_SCHEMA, OTHER_BREAKPOINT_SCHEMA])),
+    ...COLLECTION_TRUNCATION_SHAPE,
   }),
   unity_debug_add_breakpoint: z.strictObject({
     breakpoint: z.strictObject({ breakpointRef: BREAKPOINT_REF_SCHEMA }),
@@ -264,19 +269,23 @@ const RESULT_SCHEMAS = Object.freeze({
   unity_debug_threads: z.strictObject({
     ...STOPPED_METADATA_SHAPE,
     threads: z.array(THREAD_SCHEMA),
+    ...COLLECTION_TRUNCATION_SHAPE,
   }),
   unity_debug_stack_trace: z.strictObject({
     ...STOPPED_METADATA_SHAPE,
     totalFrames: SAFE_INTEGER_SCHEMA,
     frames: z.array(FRAME_SCHEMA).max(20),
+    ...COLLECTION_TRUNCATION_SHAPE,
   }),
   unity_debug_scopes: z.strictObject({
     ...STOPPED_METADATA_SHAPE,
     scopes: z.array(SCOPE_SCHEMA),
+    ...COLLECTION_TRUNCATION_SHAPE,
   }),
   unity_debug_variables: z.strictObject({
     ...STOPPED_METADATA_SHAPE,
     variables: z.array(VARIABLE_SCHEMA).max(100),
+    ...COLLECTION_TRUNCATION_SHAPE,
   }),
   unity_debug_snapshot: z.strictObject({
     ...STOPPED_METADATA_SHAPE,
@@ -285,6 +294,7 @@ const RESULT_SCHEMAS = Object.freeze({
     frames: z.array(FRAME_SCHEMA).max(20),
     scopes: z.array(SCOPE_SCHEMA),
     variables: z.array(VARIABLE_SCHEMA).max(100),
+    ...COLLECTION_TRUNCATION_SHAPE,
   }),
   unity_debug_evaluate_safe: z.strictObject({
     ...STOPPED_METADATA_SHAPE,

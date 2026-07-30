@@ -1,7 +1,15 @@
 export const MAX_BRIDGE_FRAME_BYTES = 1_048_576;
+export const MAX_BRIDGE_SUCCESS_RESULT_BYTES = 768 * 1_024;
 
-function frameTooLarge(maxFrameBytes: number): Error {
-  return new Error(`Bridge frame exceeds ${maxFrameBytes} bytes.`);
+export class BridgeFrameTooLargeError extends Error {
+  public constructor(readonly maxFrameBytes: number) {
+    super(`Bridge frame exceeds ${maxFrameBytes} bytes.`);
+    this.name = "BridgeFrameTooLargeError";
+  }
+}
+
+function frameTooLarge(maxFrameBytes: number): BridgeFrameTooLargeError {
+  return new BridgeFrameTooLargeError(maxFrameBytes);
 }
 
 export function encodeFrame(

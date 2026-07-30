@@ -156,6 +156,36 @@ describe("ToolDispatcher lifecycle tools", () => {
     expect(discoverTargets).toHaveBeenCalledWith([firstRoot, secondRoot]);
   });
 
+  it("publishes only a stable target prefix within budget and caches no hidden capabilities", async () => {
+    const escapedMultibyte = "\u0001汉".repeat(2_048);
+    const targets = Array.from({ length: 100 }, (_, index): PublicEditorTarget =>
+      Object.freeze({
+        ...firstTarget,
+        targetId: `target-${index}`,
+        processId: 5_000 + index,
+        projectName: `${index}-${escapedMultibyte}`,
+      })
+    );
+    const { dispatcher, startAttach } = harness({ roots: [firstRoot], targets });
+
+    const listed = await listTargets(dispatcher) as {
+      readonly targets: readonly PublicEditorTarget[];
+      readonly truncated?: true;
+    };
+
+    expect(Buffer.byteLength(JSON.stringify(listed), "utf8")).toBeLessThanOrEqual(786_432);
+    expect(listed.truncated).toBe(true);
+    expect(listed.targets.length).toBeGreaterThan(0);
+    expect(listed.targets.length).toBeLessThan(100);
+    expect(listed.targets.map(({ targetId }) => targetId)).toEqual(
+      targets.slice(0, listed.targets.length).map(({ targetId }) => targetId),
+    );
+    await expect(dispatcher.call("unity_debug_attach", {
+      targetId: targets[listed.targets.length]!.targetId,
+    }, "client-1")).rejects.toMatchObject({ code: "NO_TARGET" });
+    expect(startAttach).not.toHaveBeenCalled();
+  });
+
   it("filters outside and interleaved target results before output or capability caching", async () => {
     const outsideBefore: PublicEditorTarget = Object.freeze({
       ...firstTarget,

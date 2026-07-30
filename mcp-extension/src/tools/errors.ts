@@ -19,6 +19,7 @@ export const TOOL_ERROR_CODES = [
   "DAP_FAILURE",
   "TIMEOUT",
   "CANCELLED",
+  "RESULT_TOO_LARGE",
 ] as const;
 
 export type ToolErrorCode = (typeof TOOL_ERROR_CODES)[number];
@@ -68,6 +69,16 @@ export function dapFailureError(): StructuredToolError {
     retryable: false,
     currentState: "unknown",
     action: "Check debugger status before retrying the request.",
+  };
+}
+
+export function resultTooLargeError(): StructuredToolError {
+  return {
+    code: "RESULT_TOO_LARGE",
+    message: "The debugger result exceeded the bridge response limit.",
+    retryable: false,
+    currentState: "unchanged",
+    action: "Request a smaller debugger collection when the tool supports a count limit.",
   };
 }
 

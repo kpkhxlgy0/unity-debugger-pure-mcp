@@ -114,6 +114,18 @@ describe("bridge framing", () => {
     ).toBe(false);
   });
 
+  it("accepts only a strict request-id cancellation frame", () => {
+    expect(CLIENT_FRAME_SCHEMA.safeParse({ type: "cancel", id: "request-1" }).success)
+      .toBe(true);
+    for (const invalid of [
+      { type: "cancel" },
+      { type: "cancel", id: "" },
+      { type: "cancel", id: "request-1", extra: true },
+    ]) {
+      expect(CLIENT_FRAME_SCHEMA.safeParse(invalid).success).toBe(false);
+    }
+  });
+
   it("accepts every structured error code and rejects unknown fields", () => {
     const expected = [
       "BRIDGE_UNAVAILABLE",
@@ -134,6 +146,7 @@ describe("bridge framing", () => {
       "DAP_FAILURE",
       "TIMEOUT",
       "CANCELLED",
+      "RESULT_TOO_LARGE",
     ];
 
     expect(TOOL_ERROR_CODES).toEqual(expected);

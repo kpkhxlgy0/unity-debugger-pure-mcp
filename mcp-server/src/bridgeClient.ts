@@ -24,6 +24,7 @@ interface PendingCall {
   readonly resolve: (result: unknown) => void;
   readonly reject: (error: BridgeCallError) => void;
   readonly removeAbortListener: () => void;
+  sent: boolean;
 }
 
 export class BridgeCallError extends Error {
@@ -84,12 +85,16 @@ export class BridgeClient {
         }
         this.#pending.delete(id);
         pending.removeAbortListener();
-        reject(new BridgeCallError(cancelledError()));
+        if (pending.sent) {
+          this.#sendCancel(id);
+        }
+        pending.reject(new BridgeCallError(cancelledError()));
       };
       const removeAbortListener = (): void => {
         signal?.removeEventListener("abort", onAbort);
       };
-      this.#pending.set(id, { resolve, reject, removeAbortListener });
+      const pending: PendingCall = { resolve, reject, removeAbortListener, sent: false };
+      this.#pending.set(id, pending);
       signal?.addEventListener("abort", onAbort, { once: true });
       if (signal?.aborted === true) {
         onAbort();
@@ -98,15 +103,28 @@ export class BridgeClient {
 
       try {
         this.#socket.write(encodeFrame(frame));
+        pending.sent = true;
       } catch {
-        const pending = this.#pending.get(id);
-        if (pending !== undefined) {
+        const current = this.#pending.get(id);
+        if (current !== undefined) {
           this.#pending.delete(id);
-          pending.removeAbortListener();
-          pending.reject(new BridgeCallError(bridgeUnavailableError()));
+          current.removeAbortListener();
+          current.reject(new BridgeCallError(bridgeUnavailableError()));
         }
       }
     });
+  }
+
+  #sendCancel(id: string): void {
+    if (this.#state !== "ready" || this.#socket.destroyed || !this.#socket.writable) {
+      return;
+    }
+    try {
+      const frame = CLIENT_FRAME_SCHEMA.parse({ type: "cancel", id });
+      this.#socket.write(encodeFrame(frame));
+    } catch {
+      // Cancellation is best-effort; the local call is already settled as cancelled.
+    }
   }
 
   close(): void {
