@@ -127,6 +127,43 @@ describe("BridgeClient", () => {
     );
   });
 
+  it("sanitizes a hostile thrown object whose fields cannot be inspected", async () => {
+    const hostileError = new Proxy(
+      {},
+      {
+        get: () => {
+          throw new Error("hostile getter");
+        },
+        ownKeys: () => {
+          throw new Error("hostile keys");
+        },
+      },
+    );
+    const { descriptor } = await startHost(async () => {
+      throw hostileError;
+    });
+    const client = await connect(descriptor);
+    let timeout: NodeJS.Timeout | undefined;
+    const deadline = new Promise<never>((_resolve, reject) => {
+      timeout = setTimeout(() => reject(new Error("response timed out")), 500);
+    });
+
+    try {
+      await expect(
+        Promise.race([client.callTool("unity_debug_status", {}), deadline]),
+      ).rejects.toMatchObject({
+        detail: {
+          code: "DAP_FAILURE",
+          message: "The debugger request failed.",
+        },
+      });
+    } finally {
+      if (timeout !== undefined) {
+        clearTimeout(timeout);
+      }
+    }
+  });
+
   it("rejects a cancelled pending call, deletes it, and ignores its late response", async () => {
     let releaseFirst!: () => void;
     const firstBlocked = new Promise<void>((resolve) => {

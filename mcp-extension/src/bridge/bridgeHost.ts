@@ -24,6 +24,9 @@ import {
 } from "../tools/errors.js";
 
 const HELLO_TIMEOUT_MS = 5_000;
+const HOST_CLOSED_MESSAGE = "Bridge host is closed.";
+
+type BridgeHostState = "idle" | "listening" | "open" | "closing" | "closed";
 
 export interface BridgeDescriptor {
   readonly protocolVersion: 1;
@@ -82,8 +85,13 @@ export class BridgeHost {
   readonly #clock: BridgeClock;
   readonly #connections = new Set<HostConnection>();
   readonly #disconnectCleanups = new Set<Promise<void>>();
+  #state: BridgeHostState = "idle";
   #server: Server | undefined;
   #descriptor: BridgeDescriptor | undefined;
+  #listenOperation: Promise<BridgeDescriptor> | undefined;
+  #startupCompletion: Promise<void> | undefined;
+  #listenAbortController: AbortController | undefined;
+  #rejectListen: ((error: Error) => void) | undefined;
   #closing: Promise<void> | undefined;
 
   constructor(options: BridgeHostOptions) {
@@ -94,76 +102,181 @@ export class BridgeHost {
     this.#clock = options.clock ?? SYSTEM_CLOCK;
   }
 
-  async listen(): Promise<BridgeDescriptor> {
-    if (this.#descriptor !== undefined) {
-      return this.#descriptor;
+  listen(): Promise<BridgeDescriptor> {
+    if (this.#state === "open" && this.#descriptor !== undefined) {
+      return Promise.resolve(this.#descriptor);
     }
-    if (this.#closing !== undefined) {
-      throw new Error("Bridge host is closed.");
+    if (this.#state === "listening" && this.#listenOperation !== undefined) {
+      return this.#listenOperation;
+    }
+    if (this.#state !== "idle") {
+      return Promise.reject(new Error(HOST_CLOSED_MESSAGE));
     }
 
+    this.#state = "listening";
     const descriptor = Object.freeze({
       protocolVersion: 1 as const,
       pipeName: `\\\\.\\pipe\\unity-debugger-pure-mcp-${this.#randomUUID()}`,
       token: this.#randomBytes(32).toString("base64url"),
     });
-    const server = this.#createServer((socket) => this.#accept(socket, descriptor.token));
-    this.#server = server;
 
-    await new Promise<void>((resolve, reject) => {
-      const onRuntimeError = (): void => {
-        void this.close();
-      };
-      const onError = (error: Error): void => {
-        server.off("listening", onListening);
+    let server: Server;
+    try {
+      server = this.#createServer((socket) => this.#accept(socket, descriptor.token));
+    } catch (error) {
+      this.#state = "closed";
+      return Promise.reject(asError(error));
+    }
+    this.#server = server;
+    const listenAbortController = new AbortController();
+    this.#listenAbortController = listenAbortController;
+
+    let completeStartup: (() => void) | undefined;
+    this.#startupCompletion = new Promise<void>((resolve) => {
+      completeStartup = resolve;
+    });
+
+    let settled = false;
+    let resolveListen!: (value: BridgeDescriptor) => void;
+    let rejectListen!: (error: Error) => void;
+    const operation = new Promise<BridgeDescriptor>((resolve, reject) => {
+      resolveListen = resolve;
+      rejectListen = reject;
+    });
+    this.#listenOperation = operation;
+
+    const rejectOnce = (error: Error): void => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      this.#rejectListen = undefined;
+      rejectListen(error);
+    };
+    const resolveOnce = (): void => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      this.#rejectListen = undefined;
+      resolveListen(descriptor);
+    };
+    this.#rejectListen = rejectOnce;
+
+    let startupCompleted = false;
+    const completeStartupOnce = (): void => {
+      if (startupCompleted) {
+        return;
+      }
+      startupCompleted = true;
+      completeStartup?.();
+      completeStartup = undefined;
+    };
+    const onRuntimeError = (): void => {
+      void this.close();
+    };
+    const onError = (error: Error): void => {
+      server.off("listening", onListening);
+      server.off("close", onStartupClose);
+      completeStartupOnce();
+      if (this.#state === "listening") {
+        this.#state = "closed";
         this.#server = undefined;
-        reject(error);
-      };
-      const onListening = (): void => {
-        server.off("error", onError);
-        server.on("error", onRuntimeError);
-        resolve();
-      };
-      server.once("error", onError);
-      server.once("listening", onListening);
+        this.#listenAbortController = undefined;
+        rejectOnce(error);
+      } else {
+        rejectOnce(new Error(HOST_CLOSED_MESSAGE));
+      }
+    };
+    const onStartupClose = (): void => {
+      server.off("error", onError);
+      server.off("listening", onListening);
+      completeStartupOnce();
+      if (this.#state === "listening") {
+        this.#state = "closed";
+        this.#server = undefined;
+        this.#listenAbortController = undefined;
+        rejectOnce(new Error("Bridge host closed before listening."));
+      } else {
+        rejectOnce(new Error(HOST_CLOSED_MESSAGE));
+      }
+    };
+    const onListening = (): void => {
+      server.off("error", onError);
+      server.off("close", onStartupClose);
+      server.on("error", onRuntimeError);
+      completeStartupOnce();
+      if (this.#state !== "listening" || this.#server !== server) {
+        rejectOnce(new Error(HOST_CLOSED_MESSAGE));
+        void closeNetServer(server);
+        return;
+      }
+      this.#state = "open";
+      this.#descriptor = descriptor;
+      this.#listenAbortController = undefined;
+      resolveOnce();
+    };
+    server.once("error", onError);
+    server.once("close", onStartupClose);
+    server.once("listening", onListening);
+    try {
       server.listen({
         path: descriptor.pipeName,
         readableAll: false,
         writableAll: false,
+        signal: listenAbortController.signal,
       });
-    });
-
-    this.#descriptor = descriptor;
-    return descriptor;
+    } catch (error) {
+      server.off("error", onError);
+      server.off("close", onStartupClose);
+      server.off("listening", onListening);
+      completeStartupOnce();
+      this.#state = "closed";
+      this.#server = undefined;
+      this.#listenAbortController = undefined;
+      rejectOnce(asError(error));
+    }
+    return operation;
   }
 
   close(): Promise<void> {
     if (this.#closing !== undefined) {
       return this.#closing;
     }
+    if (this.#state === "closed") {
+      return Promise.resolve();
+    }
+    this.#state = "closing";
+    this.#listenAbortController?.abort();
+    this.#rejectListen?.(new Error(HOST_CLOSED_MESSAGE));
+    for (const connection of [...this.#connections]) {
+      this.#terminate(connection);
+    }
     this.#closing = this.#closeResources();
     return this.#closing;
   }
 
   async #closeResources(): Promise<void> {
-    for (const connection of [...this.#connections]) {
-      connection.socket.destroy();
-      this.#disconnect(connection);
-    }
     const server = this.#server;
+    if (this.#startupCompletion !== undefined) {
+      await this.#startupCompletion;
+    }
+    if (server !== undefined) {
+      await closeNetServer(server);
+    }
+    await Promise.all([...this.#disconnectCleanups]);
     this.#server = undefined;
     this.#descriptor = undefined;
-    if (server === undefined || !server.listening) {
-      await Promise.all([...this.#disconnectCleanups]);
-      return;
-    }
-    await new Promise<void>((resolve) => {
-      server.close(() => resolve());
-    });
-    await Promise.all([...this.#disconnectCleanups]);
+    this.#listenAbortController = undefined;
+    this.#rejectListen = undefined;
+    this.#state = "closed";
   }
 
   #accept(socket: Socket, token: string): void {
+    if (this.#state !== "listening" && this.#state !== "open") {
+      socket.destroy();
+      return;
+    }
     const connection: HostConnection = {
       socket,
       connectionId: this.#randomUUID(),
@@ -177,20 +290,20 @@ export class BridgeHost {
     connection.helloTimeout = this.#clock.setTimeout(() => {
       connection.helloTimeout = undefined;
       if (!connection.authenticated) {
-        socket.destroy();
+        this.#terminate(connection);
       }
     }, HELLO_TIMEOUT_MS);
 
     socket.on("data", (bytes) => {
       if (typeof bytes === "string") {
-        socket.destroy();
+        this.#terminate(connection);
         return;
       }
       this.#receive(connection, token, bytes);
     });
     socket.once("close", () => this.#disconnect(connection));
     socket.on("error", () => {
-      socket.destroy();
+      this.#terminate(connection);
     });
   }
 
@@ -202,20 +315,20 @@ export class BridgeHost {
     try {
       decodedFrames = connection.decoder.push(bytes);
     } catch {
-      connection.socket.destroy();
+      this.#terminate(connection);
       return;
     }
 
     for (const decoded of decodedFrames) {
       const parsed = CLIENT_FRAME_SCHEMA.safeParse(decoded);
       if (!parsed.success) {
-        connection.socket.destroy();
+        this.#terminate(connection);
         return;
       }
       const frame = parsed.data;
       if (!connection.authenticated) {
         if (frame.type !== "hello" || !tokensEqual(frame.token, token)) {
-          connection.socket.destroy();
+          this.#terminate(connection);
           return;
         }
         connection.authenticated = true;
@@ -224,7 +337,7 @@ export class BridgeHost {
         continue;
       }
       if (frame.type !== "request") {
-        connection.socket.destroy();
+        this.#terminate(connection);
         return;
       }
       void this.#dispatch(connection, frame.id, frame.params.name, frame.params.input);
@@ -260,14 +373,19 @@ export class BridgeHost {
     }
     const validated = SERVER_FRAME_SCHEMA.safeParse(frame);
     if (!validated.success) {
-      connection.socket.destroy();
+      this.#terminate(connection);
       return;
     }
     try {
       connection.socket.write(encodeFrame(validated.data));
     } catch {
-      connection.socket.destroy();
+      this.#terminate(connection);
     }
+  }
+
+  #terminate(connection: HostConnection): void {
+    this.#disconnect(connection);
+    connection.socket.destroy();
   }
 
   #disconnect(connection: HostConnection): void {
@@ -313,17 +431,35 @@ function tokensEqual(received: string, expected: string): boolean {
 }
 
 function structuredErrorFrom(error: unknown): StructuredToolError {
-  const direct = STRUCTURED_TOOL_ERROR_SCHEMA.safeParse(error);
-  if (direct.success) {
-    return direct.data;
-  }
-  if (typeof error === "object" && error !== null && "detail" in error) {
-    const nested = STRUCTURED_TOOL_ERROR_SCHEMA.safeParse(
-      (error as { readonly detail: unknown }).detail,
-    );
-    if (nested.success) {
-      return nested.data;
+  try {
+    const direct = STRUCTURED_TOOL_ERROR_SCHEMA.safeParse(error);
+    if (direct.success) {
+      return direct.data;
     }
+    if (typeof error === "object" && error !== null && "detail" in error) {
+      const nested = STRUCTURED_TOOL_ERROR_SCHEMA.safeParse(
+        (error as { readonly detail: unknown }).detail,
+      );
+      if (nested.success) {
+        return nested.data;
+      }
+    }
+  } catch {
+    return dapFailureError();
   }
   return dapFailureError();
+}
+
+function asError(error: unknown): Error {
+  return error instanceof Error ? error : new Error("Bridge host failed to listen.");
+}
+
+function closeNetServer(server: Server): Promise<void> {
+  return new Promise((resolve) => {
+    try {
+      server.close(() => resolve());
+    } catch {
+      resolve();
+    }
+  });
 }

@@ -105,6 +105,79 @@ function createHost(
 }
 
 describe("BridgeHost", () => {
+  it("shares one in-flight listen operation and binds exactly one pipe", async () => {
+    const createdServers: Server[] = [];
+    const host = new BridgeHost({
+      createServer: (listener) => {
+        const server = createServer(listener);
+        createdServers.push(server);
+        return server;
+      },
+      handler: { callTool: async () => ({ ok: true }) },
+    });
+    hosts.add(host);
+
+    try {
+      const first = host.listen();
+      const second = host.listen();
+      const third = host.listen();
+      expect(second).toBe(first);
+      expect(third).toBe(first);
+      const descriptors = await Promise.all([first, second, third]);
+
+      expect(createdServers).toHaveLength(1);
+      expect(descriptors[1]).toBe(descriptors[0]);
+      expect(descriptors[2]).toBe(descriptors[0]);
+      expect(createdServers.filter((server) => server.listening)).toHaveLength(1);
+    } finally {
+      await host.close();
+      await Promise.all(
+        createdServers.map(
+          (server) =>
+            new Promise<void>((resolve) => {
+              if (!server.listening) {
+                resolve();
+                return;
+              }
+              server.close(() => resolve());
+            }),
+        ),
+      );
+    }
+  });
+
+  it("rejects every pending listener and leaves no stale pipe when closed during listen", async () => {
+    let createdServer: Server | undefined;
+    const host = new BridgeHost({
+      createServer: (listener) => {
+        createdServer = createServer(listener);
+        return createdServer;
+      },
+      handler: { callTool: async () => ({ ok: true }) },
+    });
+    hosts.add(host);
+
+    const first = host.listen();
+    const second = host.listen();
+    const closing = host.close();
+    const results = await Promise.allSettled([first, second, closing]);
+    await new Promise<void>((resolve) => setImmediate(resolve));
+
+    try {
+      expect(results.map((result) => result.status)).toEqual([
+        "rejected",
+        "rejected",
+        "fulfilled",
+      ]);
+      await expect(host.listen()).rejects.toThrow("Bridge host is closed.");
+      expect(createdServer?.listening).toBe(false);
+    } finally {
+      if (createdServer?.listening === true) {
+        await new Promise<void>((resolve) => createdServer?.close(() => resolve()));
+      }
+    }
+  });
+
   it("uses an immutable production descriptor with a random pipe and 32-byte token", async () => {
     const descriptor = await createHost().listen();
 
@@ -194,6 +267,53 @@ describe("BridgeHost", () => {
     expect(elapsed).toBeGreaterThanOrEqual(4_850);
     expect(elapsed).toBeLessThan(7_000);
   }, 8_000);
+
+  it("invalidates a connection synchronously when its hello deadline expires", async () => {
+    let expireHello: (() => void) | undefined;
+    let acceptedSocket: Socket | undefined;
+    let markAccepted!: () => void;
+    const connectionAccepted = new Promise<void>((resolve) => {
+      markAccepted = resolve;
+    });
+    const callTool = vi.fn(async () => ({ ok: true }));
+    const host = new BridgeHost({
+      clock: {
+        setTimeout: (callback) => {
+          expireHello = callback;
+          return { fake: true } as unknown as NodeJS.Timeout;
+        },
+        clearTimeout: () => undefined,
+      },
+      createServer: (listener) =>
+        createServer((socket) => {
+          acceptedSocket = socket;
+          listener(socket);
+          markAccepted();
+        }),
+      handler: { callTool },
+    });
+    hosts.add(host);
+    const descriptor = await host.listen();
+    const socket = await openSocket(descriptor);
+    sockets.add(socket);
+    await connectionAccepted;
+    const bytes = Buffer.concat([
+      encodeFrame({ type: "hello", protocolVersion: 1, token: descriptor.token }),
+      encodeFrame({
+        type: "request",
+        id: "request-1",
+        method: "callTool",
+        params: { name: "unity_debug_status", input: {} },
+      }),
+    ]);
+
+    expireHello?.();
+    acceptedSocket?.emit("data", bytes);
+    await new Promise<void>((resolve) => setImmediate(resolve));
+
+    expect(callTool).not.toHaveBeenCalled();
+    expect(acceptedSocket?.destroyed).toBe(true);
+  });
 
   it("fails closed when a peer declares an oversized frame", async () => {
     const descriptor = await createHost().listen();

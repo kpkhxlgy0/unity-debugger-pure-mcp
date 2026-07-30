@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { FrameDecoder, encodeFrame } from "../../mcp-extension/src/bridge/framing.js";
 import {
@@ -44,6 +44,30 @@ describe("bridge framing", () => {
     expect(() => encodeFrame({ value: "x".repeat(1_048_576) })).toThrow(
       "Bridge frame exceeds 1048576 bytes.",
     );
+  });
+
+  it("copies many tiny fragments within a linear-growth budget", () => {
+    const frame = encodeFrame({ value: "x".repeat(16_384) });
+    const originalConcat = Buffer.concat;
+    let concatenatedBytes = 0;
+    const concat = vi.spyOn(Buffer, "concat").mockImplementation((buffers, totalLength) => {
+      const bytes = totalLength ?? buffers.reduce((sum, buffer) => sum + buffer.byteLength, 0);
+      concatenatedBytes += bytes;
+      return originalConcat(buffers, totalLength);
+    });
+
+    try {
+      const decoder = new FrameDecoder();
+      const decoded: unknown[] = [];
+      for (let index = 0; index < frame.byteLength; index += 1) {
+        decoded.push(...decoder.push(frame.subarray(index, index + 1)));
+      }
+
+      expect(decoded).toEqual([{ value: "x".repeat(16_384) }]);
+      expect(concatenatedBytes).toBeLessThan(frame.byteLength * 20);
+    } finally {
+      concat.mockRestore();
+    }
   });
 
   it("accepts exactly the 19 supported tool names", () => {
