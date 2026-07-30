@@ -13,132 +13,211 @@ export interface DebugSessionState {
   readonly threadId?: number;
 }
 
+export interface EventSequenceCursor {
+  readonly current: number;
+  next(): number;
+}
+
+export class EventSequencer implements EventSequenceCursor {
+  #current = 0;
+
+  public get current(): number {
+    return this.#current;
+  }
+
+  public next(): number {
+    this.#current += 1;
+    return this.#current;
+  }
+}
+
+export type NormalizedStateEventKind =
+  | "stopped"
+  | "continued"
+  | "reload-started"
+  | "reload-completed"
+  | "terminated";
+
+/**
+ * A normalized state event whose sequence has already been allocated.
+ * Event consumers must append this sequence as-is instead of calling next().
+ */
+export interface ProjectedStateEvent {
+  readonly sequence: number;
+  readonly kind: NormalizedStateEventKind;
+  readonly state: DebugSessionState;
+}
+
 const RELOAD_DETECTED_PREFIX = "Domain Reload detected; waiting for assemblies.";
-const RELOAD_WAITING_PREFIX = "Waiting for assemblies after Domain Reload.";
 const RELOAD_COMPLETE_PREFIX = "Domain Reload complete;";
 
 export class StateProjector {
-  #state: DebugSessionState = frozenState("starting", 0, 0);
+  readonly #sequencer: EventSequenceCursor;
+  #state: DebugSessionState;
+
+  public constructor(sequencer: EventSequenceCursor = new EventSequencer()) {
+    this.#sequencer = sequencer;
+    this.#state = frozenState("starting", 0, sequencer.current);
+  }
 
   public snapshot(): DebugSessionState {
+    if (this.#state.eventSequence !== this.#sequencer.current) {
+      this.#state = frozenState(
+        this.#state.phase,
+        this.#state.stopGeneration,
+        this.#sequencer.current,
+        this.#state.reason,
+        this.#state.threadId,
+      );
+    }
     return this.#state;
   }
 
-  public acceptAdapterMessage(message: unknown): void {
+  public acceptAdapterMessage(message: unknown): ProjectedStateEvent | undefined {
+    if (this.#state.phase === "terminated") {
+      return undefined;
+    }
     try {
-      this.#acceptAdapterMessage(message);
+      return this.#acceptAdapterMessage(message);
     } catch {
-      // Adapter messages are untrusted input; malformed accessors are ignored.
+      return undefined;
     }
   }
 
-  #acceptAdapterMessage(message: unknown): void {
+  #acceptAdapterMessage(message: unknown): ProjectedStateEvent | undefined {
     if (!isRecord(message)) {
-      return;
+      return undefined;
     }
 
     const type = message.type;
     if (
       type === "response" &&
+      this.#state.phase === "starting" &&
       message.command === "attach" &&
       message.success === true
     ) {
-      this.#moveOutsideStop("running");
-      return;
+      this.#state = frozenState(
+        "running",
+        this.#state.stopGeneration,
+        this.#sequencer.current,
+      );
+      return undefined;
     }
 
     const event = message.event;
     if (type !== "event" || typeof event !== "string") {
-      return;
+      return undefined;
     }
     const body = message.body;
 
     switch (event) {
       case "stopped":
-        this.#acceptStopped(body);
-        return;
+        return this.#acceptStopped(body);
       case "continued":
-        if (body === undefined || isRecord(body)) {
-          this.#moveOutsideStop("running");
+        if (this.#state.phase === "stopped" && validOptionalBody(body)) {
+          return this.#transition(
+            "continued",
+            "running",
+            this.#state.stopGeneration + 1,
+          );
         }
-        return;
+        return undefined;
       case "terminated":
-        if (body === undefined || isRecord(body)) {
-          this.#moveOutsideStop("terminated");
+        if (validOptionalBody(body)) {
+          const invalidatesLiveGeneration =
+            this.#state.phase === "stopped" || this.#state.phase === "reloading";
+          return this.#transition(
+            "terminated",
+            "terminated",
+            this.#state.stopGeneration + (invalidatesLiveGeneration ? 1 : 0),
+          );
         }
-        return;
+        return undefined;
       case "output":
-        this.#acceptOutput(body);
-        return;
+        return this.#acceptOutput(body);
       default:
-        return;
+        return undefined;
     }
   }
 
-  #acceptStopped(body: unknown): void {
-    if (!isRecord(body)) {
-      return;
+  #acceptStopped(body: unknown): ProjectedStateEvent | undefined {
+    if (
+      (this.#state.phase !== "starting" &&
+        this.#state.phase !== "running" &&
+        this.#state.phase !== "stopped") ||
+      !isRecord(body)
+    ) {
+      return undefined;
     }
     const reason = body.reason;
     const threadId = body.threadId;
     if (!isNonEmptyString(reason)) {
-      return;
+      return undefined;
     }
-    if (
-      threadId !== undefined &&
-      !Number.isSafeInteger(threadId)
-    ) {
-      return;
+    if (threadId !== undefined && !Number.isSafeInteger(threadId)) {
+      return undefined;
     }
 
-    this.#state = frozenState(
+    return this.#transition(
+      "stopped",
       "stopped",
       this.#state.stopGeneration + 1,
-      this.#state.eventSequence + 1,
       reason,
       threadId as number | undefined,
     );
   }
 
-  #acceptOutput(body: unknown): void {
-    if (!isRecord(body)) {
-      return;
+  #acceptOutput(body: unknown): ProjectedStateEvent | undefined {
+    if (
+      (this.#state.phase !== "running" && this.#state.phase !== "reloading") ||
+      !isRecord(body)
+    ) {
+      return undefined;
     }
+    const category = body.category;
     const output = body.output;
-    if (typeof output !== "string") {
-      return;
+    if (category !== "console" || typeof output !== "string") {
+      return undefined;
     }
     if (
-      output.startsWith(RELOAD_DETECTED_PREFIX) ||
-      output.startsWith(RELOAD_WAITING_PREFIX)
+      this.#state.phase === "running" &&
+      output.startsWith(RELOAD_DETECTED_PREFIX)
     ) {
-      this.#moveIntoReload();
-      return;
+      return this.#transition(
+        "reload-started",
+        "reloading",
+        this.#state.stopGeneration,
+      );
     }
-    if (output.startsWith(RELOAD_COMPLETE_PREFIX)) {
-      this.#moveOutsideStop("running");
+    if (
+      this.#state.phase === "reloading" &&
+      output.startsWith(RELOAD_COMPLETE_PREFIX)
+    ) {
+      return this.#transition(
+        "reload-completed",
+        "running",
+        this.#state.stopGeneration + 1,
+      );
     }
+    return undefined;
   }
 
-  #moveIntoReload(): void {
-    const generation = this.#state.phase === "stopped"
-      ? this.#state.stopGeneration + 1
-      : this.#state.stopGeneration;
-    this.#state = frozenState(
-      "reloading",
-      generation,
-      this.#state.eventSequence + 1,
-    );
-  }
-
-  #moveOutsideStop(phase: "running" | "terminated"): void {
-    const invalidatesLiveGeneration =
-      this.#state.phase === "stopped" || this.#state.phase === "reloading";
+  #transition(
+    kind: NormalizedStateEventKind,
+    phase: DebugPhase,
+    stopGeneration: number,
+    reason?: string,
+    threadId?: number,
+  ): ProjectedStateEvent {
+    const sequence = this.#sequencer.next();
     this.#state = frozenState(
       phase,
-      this.#state.stopGeneration + (invalidatesLiveGeneration ? 1 : 0),
-      this.#state.eventSequence + 1,
+      stopGeneration,
+      sequence,
+      reason,
+      threadId,
     );
+    return Object.freeze({ sequence, kind, state: this.#state });
   }
 }
 
@@ -163,6 +242,10 @@ function frozenState(
     state.threadId = threadId;
   }
   return Object.freeze(state);
+}
+
+function validOptionalBody(body: unknown): boolean {
+  return body === undefined || isRecord(body);
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

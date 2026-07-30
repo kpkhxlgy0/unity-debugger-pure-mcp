@@ -1,12 +1,22 @@
 import { describe, expect, it } from "vitest";
+import type * as vscode from "vscode";
 
-import {
-  SessionRegistry,
-  type DebugSessionLike,
-} from "../../mcp-extension/src/debug/sessionRegistry.js";
+import { SessionRegistry } from "../../mcp-extension/src/debug/sessionRegistry.js";
 
-function session(id: string, type = "unity-debugger-pure"): DebugSessionLike {
-  return Object.freeze({ id, type });
+function session(id: string, type = "unity-debugger-pure"): vscode.DebugSession {
+  return Object.freeze({
+    id,
+    type,
+    name: `Debug ${id}`,
+    workspaceFolder: undefined,
+    configuration: {
+      name: `Debug ${id}`,
+      type,
+      request: "attach",
+    },
+    customRequest: async () => undefined,
+    getDebugProtocolBreakpoint: async () => undefined,
+  });
 }
 
 describe("SessionRegistry", () => {
@@ -139,5 +149,29 @@ describe("SessionRegistry", () => {
 
     expect(registry.remove(stale)).toBe(false);
     expect(registry.remove(replacement)).toBe(true);
+  });
+
+  it("tombstones every issued ref so a removed selection can never revive", () => {
+    const firstBytes = Buffer.alloc(16, 6);
+    const secondBytes = Buffer.alloc(16, 7);
+    const values = [firstBytes, firstBytes, secondBytes];
+    const registry = new SessionRegistry(() => values.shift()!);
+    const oldSession = session("old-vscode-session");
+    const oldSelection = registry.register(oldSession, true)!;
+
+    registry.remove(oldSession);
+    const newSession = session("new-vscode-session");
+    const newSelection = registry.register(newSession, true)!;
+
+    expect(newSelection.sessionRef).not.toBe(oldSelection.sessionRef);
+    expect(() => registry.select(oldSelection.sessionRef)).toThrowError(
+      expect.objectContaining({ code: "NOT_ATTACHED" }),
+    );
+    expect(() => registry.resolveDebugSession(oldSelection)).toThrowError(
+      expect.objectContaining({ code: "NOT_ATTACHED" }),
+    );
+    const resolved: vscode.DebugSession = registry.resolveDebugSession(newSelection);
+    expect(resolved).toBe(newSession);
+    expect(typeof resolved.customRequest).toBe("function");
   });
 });

@@ -95,10 +95,14 @@ export class DependencyAdapter {
   async #activateOnce(): Promise<UnityDebuggerPureApiV1> {
     try {
       const extension = this.#getExtension(DEBUGGER_EXTENSION_ID);
-      if (extension === undefined || typeof extension.activate !== "function") {
+      if (extension === undefined) {
         throw incompatibleDebuggerApiError();
       }
-      const candidate = await extension.activate.call(extension);
+      const activate = extension.activate;
+      if (typeof activate !== "function") {
+        throw incompatibleDebuggerApiError();
+      }
+      const candidate = await activate.call(extension);
       return validatedFacade(candidate);
     } catch {
       throw incompatibleDebuggerApiError();

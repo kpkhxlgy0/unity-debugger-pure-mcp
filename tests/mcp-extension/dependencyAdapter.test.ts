@@ -139,6 +139,29 @@ describe("DependencyAdapter", () => {
     expect(versionReads).toBe(1);
   });
 
+  it("captures the extension activate getter once before validation and invocation", async () => {
+    let activateReads = 0;
+    const extension = {
+      marker: "extension-receiver",
+      get activate(): () => Promise<ReturnType<typeof validApi>> {
+        activateReads += 1;
+        if (activateReads > 1) {
+          return undefined as never;
+        }
+        return async function (this: { marker: string }) {
+          if (this.marker !== "extension-receiver") {
+            throw new Error("lost extension receiver");
+          }
+          return validApi();
+        };
+      },
+    };
+    const adapter = new DependencyAdapter(() => extension);
+
+    await expect(adapter.activate()).resolves.toMatchObject({ apiVersion: 1 });
+    expect(activateReads).toBe(1);
+  });
+
   it("maps public error codes without relaying forged messages or target data", async () => {
     const adapter = new DependencyAdapter(() => ({
       activate: async () => validApi({

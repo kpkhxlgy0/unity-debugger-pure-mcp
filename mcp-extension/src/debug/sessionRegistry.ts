@@ -1,15 +1,11 @@
 import { randomBytes as nodeRandomBytes } from "node:crypto";
+import type * as vscode from "vscode";
 
 import type { StructuredToolError } from "../tools/errors.js";
 
 const DEBUG_TYPE = "unity-debugger-pure";
 const SESSION_REF_BYTES = 16;
 const MAX_COLLISION_RETRIES = 128;
-
-export interface DebugSessionLike {
-  readonly id: string;
-  readonly type: string;
-}
 
 export interface SessionSelection {
   readonly sessionRef: string;
@@ -18,7 +14,7 @@ export interface SessionSelection {
 
 interface SessionEntry {
   readonly sessionRef: string;
-  session: DebugSessionLike;
+  session: vscode.DebugSession;
   tracked: boolean;
 }
 
@@ -28,13 +24,14 @@ export class SessionRegistry {
   readonly #randomBytes: RandomBytes;
   readonly #bySessionId = new Map<string, SessionEntry>();
   readonly #bySessionRef = new Map<string, SessionEntry>();
+  readonly #issuedSessionRefs = new Set<string>();
 
   public constructor(randomBytes: RandomBytes = nodeRandomBytes) {
     this.#randomBytes = randomBytes;
   }
 
   public register(
-    session: DebugSessionLike,
+    session: vscode.DebugSession,
     tracked: boolean,
   ): SessionSelection | undefined {
     if (session.type !== DEBUG_TYPE || session.id.length === 0) {
@@ -58,7 +55,7 @@ export class SessionRegistry {
     return viewOf(entry);
   }
 
-  public remove(session: DebugSessionLike): boolean {
+  public remove(session: vscode.DebugSession): boolean {
     const entry = this.#bySessionId.get(session.id);
     if (entry === undefined || entry.session !== session) {
       return false;
@@ -94,7 +91,7 @@ export class SessionRegistry {
     return selection;
   }
 
-  public resolveDebugSession(selection: SessionSelection): DebugSessionLike {
+  public resolveDebugSession(selection: SessionSelection): vscode.DebugSession {
     const entry = this.#bySessionRef.get(selection.sessionRef);
     if (entry === undefined) {
       throw notAttachedError();
@@ -109,7 +106,8 @@ export class SessionRegistry {
         throw new Error("Session reference entropy source returned an invalid length.");
       }
       const sessionRef = bytes.toString("base64url");
-      if (!this.#bySessionRef.has(sessionRef)) {
+      if (!this.#issuedSessionRefs.has(sessionRef)) {
+        this.#issuedSessionRefs.add(sessionRef);
         return sessionRef;
       }
     }
