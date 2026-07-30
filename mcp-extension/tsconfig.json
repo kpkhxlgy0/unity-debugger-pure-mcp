@@ -1,6 +1,11 @@
 {
   "extends": "../tsconfig.json",
   "compilerOptions": {
+    "paths": {
+      "vscode": [
+        "./node_modules/@types/vscode/index.d.ts"
+      ]
+    },
     "types": [
       "node",
       "vscode"

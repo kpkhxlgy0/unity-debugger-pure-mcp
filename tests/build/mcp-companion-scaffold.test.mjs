@@ -49,7 +49,12 @@ test("base and companion TypeScript programs isolate VS Code declarations", () =
     "./node_modules/@types",
     "../node_modules/@types",
   ]);
+  assert.equal(companion.compilerOptions.baseUrl, undefined);
+  assert.deepEqual(companion.compilerOptions.paths, {
+    vscode: ["./node_modules/@types/vscode/index.d.ts"],
+  });
   assert.deepEqual(server.compilerOptions.types, ["node"]);
+  assert.ok(fs.existsSync("tests/mcp-extension/vscode-1.96-boundary.ts"));
 });
 
 test("extension manifests do not load MCP server runtime dependencies", () => {
