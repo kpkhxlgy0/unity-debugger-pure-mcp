@@ -37,12 +37,14 @@ test("companion VSIX excludes the workspace parent", () => {
 });
 
 test("base and companion TypeScript programs isolate VS Code declarations", () => {
+  const rootManifest = JSON.parse(fs.readFileSync("package.json", "utf8"));
   const base = JSON.parse(fs.readFileSync("tsconfig.json", "utf8"));
   const companion = JSON.parse(
     fs.readFileSync("mcp-extension/tsconfig.json", "utf8"),
   );
   const server = JSON.parse(fs.readFileSync("mcp-server/tsconfig.json", "utf8"));
 
+  assert.equal(rootManifest.devDependencies["@types/vscode"], "1.95.0");
   assert.equal(base.compilerOptions.skipLibCheck, undefined);
   assert.doesNotMatch(base.include.join("\n"), /^mcp-(extension|server)\//m);
   assert.deepEqual(companion.compilerOptions.types, ["node", "vscode"]);
