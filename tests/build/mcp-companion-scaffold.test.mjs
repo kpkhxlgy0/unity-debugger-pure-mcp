@@ -9,7 +9,8 @@ test("MCP companion is a separate dependent Windows extension", () => {
   assert.equal(manifest.publisher, "kpk");
   assert.equal(manifest.name, "unity-debugger-pure-mcp");
   assert.equal(manifest.version, "0.1.0");
-  assert.equal(manifest.engines.vscode, "^1.96.0");
+  assert.equal(manifest.engines.vscode, "^1.101.0");
+  assert.equal(manifest.devDependencies["@types/vscode"], "1.101.0");
   assert.deepEqual(manifest.activationEvents, []);
   assert.deepEqual(manifest.extensionDependencies, [
     "kpk.unity-debugger-pure",
@@ -54,7 +55,21 @@ test("base and companion TypeScript programs isolate VS Code declarations", () =
     vscode: ["./node_modules/@types/vscode/index.d.ts"],
   });
   assert.deepEqual(server.compilerOptions.types, ["node"]);
-  assert.ok(fs.existsSync("tests/mcp-extension/vscode-1.96-boundary.ts"));
+  assert.ok(fs.existsSync("tests/mcp-extension/vscode-1.101-boundary.ts"));
+});
+
+test("companion lock entry pins the stable VS Code MCP API types", () => {
+  const lock = JSON.parse(fs.readFileSync("package-lock.json", "utf8"));
+
+  assert.equal(lock.packages["mcp-extension"].engines.vscode, "^1.101.0");
+  assert.equal(
+    lock.packages["mcp-extension"].devDependencies["@types/vscode"],
+    "1.101.0",
+  );
+  assert.equal(
+    lock.packages["mcp-extension/node_modules/@types/vscode"].version,
+    "1.101.0",
+  );
 });
 
 test("extension manifests do not load MCP server runtime dependencies", () => {

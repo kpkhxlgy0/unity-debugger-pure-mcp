@@ -16,7 +16,7 @@
   "private": true,
   "type": "module",
   "engines": {
-    "vscode": "^1.96.0"
+    "vscode": "^1.101.0"
   },
   "extensionKind": [
     "workspace"
@@ -41,6 +41,6 @@
     "build": "node esbuild.mjs"
   },
   "devDependencies": {
-    "@types/vscode": "1.96.0"
+    "@types/vscode": "1.101.0"
   }
 }

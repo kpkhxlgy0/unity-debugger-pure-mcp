@@ -6,7 +6,7 @@
 
 **Architecture:** Each companion extension window publishes a short-lived authenticated descriptor beneath its `globalStorageUri`. The external stdio server is installed only by an explicit command into versioned storage behind a stable launcher and resolves a live VS Code window by canonical workspace roots on every connection or reconnect. Configuration renderers display/copy scoped snippets but never edit third-party settings. Release gates cover descriptor security, bridge upgrades, dual-client serialization, package inventories, and user-confirmed acceptance in the existing `MyGame` Editor and its VS Code window.
 
-**Tech Stack:** TypeScript 7.0.2, VS Code Extension API ^1.96.0, Node.js 26.5.0, `@modelcontextprotocol/sdk` 1.30.0, Zod 4.4.3, Vitest 4.1.10, Node test runner, esbuild 0.28.1, Node single-executable applications, VSCE 3.9.2.
+**Tech Stack:** TypeScript 7.0.2, VS Code Extension API ^1.101.0, Node.js 26.5.0, `@modelcontextprotocol/sdk` 1.30.0, Zod 4.4.3, Vitest 4.1.10, Node test runner, esbuild 0.28.1, Node single-executable applications, VSCE 3.9.2.
 
 ## Global Constraints
 

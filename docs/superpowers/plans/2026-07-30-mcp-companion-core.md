@@ -6,7 +6,7 @@
 
 **Architecture:** The companion validates `UnityDebuggerPureApiV1`, tracks DAP traffic with `DebugAdapterTracker`, and serializes all tool calls through a per-session dispatcher. A separate TypeScript MCP process communicates with the extension over an authenticated Windows named pipe; it never discovers Editors or starts the Adapter itself. VS Code's MCP definition provider launches the packaged bridge executable with the current pipe descriptor and workspace allowlist.
 
-**Tech Stack:** TypeScript 7.0.2, VS Code Extension API ^1.96.0, Node.js 26.5.0, `@modelcontextprotocol/sdk` 1.30.0, Zod 4.4.3, Vitest 4.1.10, esbuild 0.28.1, Node single-executable applications, VSCE 3.9.2.
+**Tech Stack:** TypeScript 7.0.2, VS Code Extension API ^1.101.0, Node.js 26.5.0, `@modelcontextprotocol/sdk` 1.30.0, Zod 4.4.3, Vitest 4.1.10, esbuild 0.28.1, Node single-executable applications, VSCE 3.9.2.
 
 ## Global Constraints
 
@@ -110,7 +110,7 @@ test("MCP companion is a separate dependent Windows extension", () => {
   assert.equal(manifest.publisher, "kpk");
   assert.equal(manifest.name, "unity-debugger-pure-mcp");
   assert.equal(manifest.version, "0.1.0");
-  assert.equal(manifest.engines.vscode, "^1.96.0");
+  assert.equal(manifest.engines.vscode, "^1.101.0");
   assert.deepEqual(manifest.extensionDependencies, [
     "kpk.unity-debugger-pure",
   ]);
@@ -186,7 +186,7 @@ repository URLs:
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "engines": { "vscode": "^1.96.0" },
+  "engines": { "vscode": "^1.101.0" },
   "extensionKind": ["workspace"],
   "os": ["win32"],
   "main": "./dist/extension.cjs",
@@ -1054,7 +1054,7 @@ Expected: FAIL.
 
 - [ ] **Step 3: Implement the definition provider**
 
-Use the VS Code 1.96 positional constructor supported by the declared types:
+Use the VS Code 1.101 positional constructor supported by the declared types:
 
 ```ts
 new vscode.McpStdioServerDefinition(
