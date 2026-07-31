@@ -101,8 +101,28 @@ test("normal scripts typecheck and test both standalone programs", () => {
   );
   assert.equal(scripts["build:launcher"], "node scripts/build-launcher.mjs");
   assert.equal(
+    scripts["package:companion"],
+    "npm run build:extension && npm run build:bridge && npm run package:vsix && npm run verify:vsix",
+  );
+  assert.equal(
+    scripts["package:launcher"],
+    "npm run build:launcher && npm run verify:launcher",
+  );
+  assert.equal(
+    scripts["test:package:companion"],
+    "node --test tests/package/mcp-vsix.test.mjs",
+  );
+  assert.equal(
+    scripts["test:package:launcher"],
+    "node --test tests/package/launcher-package.test.mjs",
+  );
+  assert.equal(
     scripts["test:package"],
-    "node --test --test-concurrency=1 tests/package/*.test.mjs",
+    "npm run test:package:companion && npm run test:package:launcher",
+  );
+  assert.equal(
+    scripts.package,
+    "npm run package:companion && npm run package:launcher",
   );
   assert.equal(
     scripts["verify:launcher"],

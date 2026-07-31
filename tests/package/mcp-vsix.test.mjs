@@ -31,7 +31,7 @@ test("companion SEA and VSIX satisfy the isolated production contract", {
         "npm-cli.js",
       ),
       "run",
-      "package",
+      "package:companion",
     ],
     {
       cwd: repositoryRoot,
