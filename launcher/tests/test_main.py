@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import io
 import os
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
@@ -60,16 +61,18 @@ class MainTests(unittest.TestCase):
 
     def test_exec_bridge_uses_exact_shell_free_registry_argv(self) -> None:
         selection = self.selection()
-        with patch("os.execv") as execv:
-            with self.assertRaises(RuntimeError):
+        completed = subprocess.CompletedProcess([], 17)
+        with patch("subprocess.run", return_value=completed) as run:
+            with self.assertRaises(SystemExit) as stopped:
                 exec_bridge(selection)
-        execv.assert_called_once_with(selection.bridge_executable, [
+        self.assertEqual(stopped.exception.code, 17)
+        run.assert_called_once_with([
             selection.bridge_executable,
             "--registry",
             selection.runtime_root,
             "--client-root",
             selection.client_root,
-        ])
+        ], check=False, shell=False)
 
     def test_main_rejects_non_windows_and_arguments(self) -> None:
         stderr = io.StringIO()

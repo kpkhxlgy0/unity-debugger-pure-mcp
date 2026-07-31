@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import subprocess
 import sys
 from collections.abc import Callable, Mapping, Sequence
 from typing import NoReturn, TextIO
@@ -29,8 +30,7 @@ EXIT_INCOMPATIBLE = 6
 
 
 def exec_bridge(selection: LaunchSelection) -> NoReturn:
-    os.execv(
-        selection.bridge_executable,
+    completed = subprocess.run(
         [
             selection.bridge_executable,
             "--registry",
@@ -38,8 +38,10 @@ def exec_bridge(selection: LaunchSelection) -> NoReturn:
             "--client-root",
             selection.client_root,
         ],
+        check=False,
+        shell=False,
     )
-    raise RuntimeError("Process replacement unexpectedly returned.")
+    raise SystemExit(completed.returncode)
 
 
 def main(
