@@ -20,6 +20,10 @@ import {
 } from "./debug/stateProjector.js";
 import { DependencyAdapter } from "./dependencyAdapter.js";
 import {
+  LiveHostRegistrationPublisher,
+  verifyReviewedBridgeIntegrity,
+} from "./external/liveHostRegistrationPublisher.js";
+import {
   createMcpProvider,
   MCP_PROVIDER_ID,
 } from "./mcpProvider.js";
@@ -34,6 +38,11 @@ interface DebuggerExtensionLike {
 
 interface BridgeHostLike {
   listen(): Promise<BridgeDescriptor>;
+  close(): Promise<void>;
+}
+
+interface LiveHostPublisherLike {
+  start(): Promise<void>;
   close(): Promise<void>;
 }
 
@@ -67,6 +76,9 @@ export interface ExtensionCompositionBoundary {
     factory: vscode.DebugAdapterTrackerFactory,
   ): vscode.Disposable;
   createBridgeHost(handler: BridgeToolHandler): BridgeHostLike;
+  createLiveHostRegistrationPublisher(
+    descriptor: BridgeDescriptor,
+  ): Promise<LiveHostPublisherLike>;
   registerMcpProvider(
     id: string,
     provider: vscode.McpServerDefinitionProvider<vscode.McpStdioServerDefinition>,
@@ -118,7 +130,9 @@ export async function activateWithDependencies(
   const runtimeBySessionRef = new Map<string, SessionRuntime>();
   const lifecycleDisposables: vscode.Disposable[] = [];
   let host: BridgeHostLike | undefined;
+  let publisher: LiveHostPublisherLike | undefined;
   let providerDisposable: vscode.Disposable | undefined;
+  let publisherCloseOperation: Promise<void> | undefined;
   let closeOperation: Promise<void> | undefined;
   let disposed = false;
 
@@ -128,8 +142,15 @@ export async function activateWithDependencies(
     }
     return closeOperation;
   };
+  const closePublisher = (): Promise<void> => {
+    if (publisherCloseOperation === undefined) {
+      publisherCloseOperation = publisher?.close() ?? Promise.resolve();
+    }
+    return publisherCloseOperation;
+  };
   const disposeResources = async (): Promise<void> => {
     if (disposed) {
+      await publisherCloseOperation;
       await closeOperation;
       return;
     }
@@ -142,6 +163,11 @@ export async function activateWithDependencies(
     }
     for (const runtime of runtimeBySessionRef.values()) {
       runtime.events.invalidate(notAttachedError());
+    }
+    try {
+      await closePublisher();
+    } catch (error) {
+      failure ??= error;
     }
     try {
       await closeBridge();
@@ -361,6 +387,8 @@ export async function activateWithDependencies(
       onDisconnect: (context) => dispatcher.onDisconnect(context.connectionId),
     });
     const descriptor = await host.listen();
+    publisher = await boundary.createLiveHostRegistrationPublisher(descriptor);
+    await publisher.start();
     const provider = createMcpProvider({
       executable: boundary.executable,
       descriptor,
@@ -379,8 +407,14 @@ export async function activateWithDependencies(
         void closeBridge();
       },
     });
+    const publisherDisposable = onceDisposable({
+      dispose: () => {
+        void closePublisher();
+      },
+    });
     context.subscriptions.push(
       providerDisposable,
+      publisherDisposable,
       bridgeDisposable,
       ...[...lifecycleDisposables].reverse(),
     );
@@ -481,6 +515,28 @@ function productionBoundary(
     registerDebugAdapterTrackerFactory: (debugType, factory) =>
       vscode.debug.registerDebugAdapterTrackerFactory(debugType, factory),
     createBridgeHost: (handler) => new BridgeHost({ handler }),
+    async createLiveHostRegistrationPublisher(descriptor) {
+      const executable = context.asAbsolutePath(path.join("dist", "mcp-bridge.exe"));
+      const bridgeSha256 = await verifyReviewedBridgeIntegrity(
+        context.asAbsolutePath("runtime-inventory.json"),
+        executable,
+      );
+      return new LiveHostRegistrationPublisher({
+        localAppData: process.env.LOCALAPPDATA ?? "",
+        ownerPid: process.pid,
+        extensionRoot: context.extensionUri.fsPath,
+        bridgeExecutable: executable,
+        bridgeVersion: version,
+        bridgeSha256,
+        descriptor,
+        workspace: () => ({
+          trusted: vscode.workspace.isTrusted,
+          roots: (vscode.workspace.workspaceFolders ?? []).map(
+            (folder) => folder.uri.fsPath,
+          ),
+        }),
+      });
+    },
     registerMcpProvider: (id, provider) =>
       vscode.lm.registerMcpServerDefinitionProvider(id, provider),
   };

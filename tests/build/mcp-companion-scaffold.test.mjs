@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
+import path from "node:path";
 import test from "node:test";
 
 test("repository root is the dependent Windows MCP extension", () => {
@@ -69,6 +70,17 @@ test("TypeScript programs isolate VS Code and server declarations", () => {
     "src/" + "**" + "/*.ts",
     "../tests/server/" + "**" + "/*.ts",
   ]);
+});
+
+test("the registration publisher is compiled only into the extension program", () => {
+  const publisher = normalize(path.resolve(
+    "src/external/liveHostRegistrationPublisher.ts",
+  ));
+  const extensionFiles = typeScriptFiles("tsconfig.json");
+  const serverFiles = typeScriptFiles("server/tsconfig.json");
+
+  assert.equal(extensionFiles.includes(publisher), true);
+  assert.equal(serverFiles.includes(publisher), false);
 });
 
 test("normal scripts typecheck and test both standalone programs", () => {
@@ -153,4 +165,24 @@ function isIgnored(file) {
     `git check-ignore failed for ${file}: ${result.stderr}`,
   );
   return result.status === 0;
+}
+
+function typeScriptFiles(project) {
+  const result = spawnSync(
+    process.execPath,
+    ["node_modules/typescript/bin/tsc", "-p", project, "--listFilesOnly"],
+    {
+      cwd: process.cwd(),
+      encoding: "utf8",
+      timeout: 30_000,
+      windowsHide: true,
+    },
+  );
+  assert.equal(result.error, undefined);
+  assert.equal(result.status, 0, result.stderr);
+  return result.stdout.split(/\r?\n/).filter(Boolean).map(normalize);
+}
+
+function normalize(file) {
+  return file.replaceAll("\\", "/").toLowerCase();
 }

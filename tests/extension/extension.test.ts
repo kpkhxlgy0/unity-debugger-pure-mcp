@@ -103,6 +103,9 @@ function harness(options: {
   readonly activeSession?: FakeSession;
   readonly failListen?: boolean;
   readonly failClose?: boolean;
+  readonly failPublisherStart?: boolean;
+  readonly failPublisherClose?: boolean;
+  readonly deferPublisherClose?: boolean;
   readonly failProvider?: boolean;
   readonly platform?: NodeJS.Platform;
   readonly arch?: string;
@@ -112,6 +115,10 @@ function harness(options: {
   const subscriptions: vscode.Disposable[] = [];
   let bridgeHandler: BridgeToolHandler | undefined;
   let provider: vscode.McpServerDefinitionProvider | undefined;
+  let releasePublisherClose: (() => void) | undefined;
+  const publisherCloseGate = new Promise<void>((resolve) => {
+    releasePublisherClose = resolve;
+  });
   const makeDisposable = (name: string): vscode.Disposable => ({
     dispose: vi.fn(() => log.push(`dispose:${name}`)),
   });
@@ -184,6 +191,26 @@ function harness(options: {
         },
       };
     },
+    async createLiveHostRegistrationPublisher(descriptor) {
+      log.push(`create:publisher:${descriptor.pipeName}`);
+      return {
+        async start() {
+          log.push("start:publisher");
+          if (options.failPublisherStart) {
+            throw new Error("publisher start failed");
+          }
+        },
+        async close() {
+          log.push("close:publisher");
+          if (options.failPublisherClose) {
+            throw new Error("publisher close failed");
+          }
+          if (options.deferPublisherClose) {
+            await publisherCloseGate;
+          }
+        },
+      };
+    },
     registerMcpProvider(id, value) {
       log.push(`register:provider:${id}`);
       if (options.failProvider) {
@@ -205,6 +232,7 @@ function harness(options: {
     listeners,
     log,
     provider: () => provider!,
+    releasePublisherClose: () => releasePublisherClose?.(),
     subscriptions,
   };
 }
@@ -237,9 +265,11 @@ describe("MCP companion extension composition", () => {
       "register:breakpoints",
       `register:tracker:${DEBUG_TYPE}`,
       "listen",
+      `create:publisher:${PIPE_NAME}`,
+      "start:publisher",
       "register:provider:unity-debugger-pure-mcp.server",
     ]);
-    expect(setup.subscriptions).toHaveLength(6);
+    expect(setup.subscriptions).toHaveLength(7);
     const definitions = await setup.provider().provideMcpServerDefinitions({
       isCancellationRequested: false,
       onCancellationRequested: (() => ({ dispose() {} })) as vscode.Event<unknown>,
@@ -252,8 +282,9 @@ describe("MCP companion extension composition", () => {
     });
 
     await runtime.dispose();
-    expect(setup.log.slice(-6)).toEqual([
+    expect(setup.log.slice(-7)).toEqual([
       "dispose:provider",
+      "close:publisher",
       "close:bridge",
       "dispose:tracker",
       "dispose:breakpoints",
@@ -518,14 +549,37 @@ describe("MCP companion extension composition", () => {
     expect(vi.getTimerCount()).toBe(0);
   });
 
+  it("cleans up lifecycle hooks after bridge listen failure", async () => {
+    const setup = harness({ failListen: true });
+    await expect(activateWithDependencies(setup.context, setup.boundary))
+      .rejects.toThrow("listen failed");
+    expect(setup.context.subscriptions).toHaveLength(0);
+    expect(setup.log.slice(-5)).toEqual([
+      "close:bridge",
+      "dispose:tracker",
+      "dispose:breakpoints",
+      "dispose:terminate",
+      "dispose:start",
+    ]);
+  });
+
   it.each([
-    { name: "bridge listen", options: { failListen: true }, failure: "listen failed" },
-    { name: "provider registration", options: { failProvider: true }, failure: "provider failed" },
-  ])("cleans up in reverse order after $name failure", async ({ options, failure }) => {
+    {
+      name: "publisher start",
+      options: { failPublisherStart: true },
+      failure: "publisher start failed",
+    },
+    {
+      name: "provider registration",
+      options: { failProvider: true },
+      failure: "provider failed",
+    },
+  ])("closes publisher and Host after $name failure", async ({ options, failure }) => {
     const setup = harness(options);
     await expect(activateWithDependencies(setup.context, setup.boundary)).rejects.toThrow(failure);
     expect(setup.context.subscriptions).toHaveLength(0);
-    expect(setup.log.slice(-5)).toEqual([
+    expect(setup.log.slice(-6)).toEqual([
+      "close:publisher",
       "close:bridge",
       "dispose:tracker",
       "dispose:breakpoints",
@@ -547,14 +601,48 @@ describe("MCP companion extension composition", () => {
     const setup = harness({ failClose: true });
     const runtime = await activateWithDependencies(setup.context, setup.boundary);
     await expect(runtime.dispose()).rejects.toThrow("close failed");
-    expect(setup.log.slice(-6)).toEqual([
+    expect(setup.log.slice(-7)).toEqual([
       "dispose:provider",
+      "close:publisher",
       "close:bridge",
       "dispose:tracker",
       "dispose:breakpoints",
       "dispose:terminate",
       "dispose:start",
     ]);
+  });
+
+  it("still closes the Host and lifecycle hooks when publisher cleanup fails", async () => {
+    const setup = harness({ failPublisherClose: true });
+    const runtime = await activateWithDependencies(setup.context, setup.boundary);
+    await expect(runtime.dispose()).rejects.toThrow("publisher close failed");
+    expect(setup.log.slice(-7)).toEqual([
+      "dispose:provider",
+      "close:publisher",
+      "close:bridge",
+      "dispose:tracker",
+      "dispose:breakpoints",
+      "dispose:terminate",
+      "dispose:start",
+    ]);
+  });
+
+  it("makes every concurrent dispose wait for publisher cleanup", async () => {
+    const setup = harness({ deferPublisherClose: true });
+    const runtime = await activateWithDependencies(setup.context, setup.boundary);
+    const first = runtime.dispose();
+    await vi.waitFor(() => expect(setup.log).toContain("close:publisher"));
+
+    let secondSettled = false;
+    const second = runtime.dispose().then(() => { secondSettled = true; });
+    await Promise.resolve();
+    await Promise.resolve();
+    const settledBeforeRelease = secondSettled;
+    setup.releasePublisherClose();
+    await Promise.all([first, second]);
+    expect(settledBeforeRelease).toBe(false);
+    expect(setup.log.filter((entry) => entry === "close:publisher")).toHaveLength(1);
+    expect(setup.log.filter((entry) => entry === "close:bridge")).toHaveLength(1);
   });
 
   it("keeps reverse teardown order when the host disposes subscriptions before deactivate settles", async () => {
@@ -567,8 +655,9 @@ describe("MCP companion extension composition", () => {
     }
     await deactivation;
 
-    expect(setup.log.slice(-6)).toEqual([
+    expect(setup.log.slice(-7)).toEqual([
       "dispose:provider",
+      "close:publisher",
       "close:bridge",
       "dispose:tracker",
       "dispose:breakpoints",
