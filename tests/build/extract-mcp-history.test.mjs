@@ -167,6 +167,21 @@ test("rejects a target nested inside the source repository", async (t) => {
   assert.equal(git(fixture.source, ["status", "--porcelain"]), "");
 });
 
+test("accepts a source root reached through a Windows directory junction", async (t) => {
+  const fixture = createFixture(t);
+  const sourceAlias = path.join(path.dirname(fixture.source), "source-alias");
+  fs.symlinkSync(fixture.source, sourceAlias, "junction");
+
+  const report = await extractStandaloneHistory({
+    source: sourceAlias,
+    sourceRef: fixture.head,
+    target: fixture.target,
+  });
+
+  assert.equal(report.sourceCommit, fixture.head);
+  assert.equal(report.retainedCommits.length, fixture.retained.length);
+});
+
 test("CLI rejects unknown, relative, and malformed arguments", () => {
   const cases = [
     ["--unknown", "value"],

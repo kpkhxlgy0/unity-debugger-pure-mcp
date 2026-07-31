@@ -29,7 +29,11 @@ test("standalone repository exposes only the public debugger dependency", () => 
   assert.equal(fs.existsSync("launcher/uv.lock"), true);
   assert.equal(fs.existsSync("mcp-extension"), false);
   assert.equal(fs.existsSync("mcp-server"), false);
-  assert.equal(git(["remote"]).trim(), "");
+  assert.equal(git(["remote"]).trim(), "origin");
+  assert.equal(
+    git(["remote", "get-url", "origin"]).trim(),
+    "https://github.com/kpkhxlgy0/unity-debugger-pure-mcp.git",
+  );
 });
 
 test("the VSIX ignore boundary excludes every launcher and launcher artifact", () => {

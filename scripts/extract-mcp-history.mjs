@@ -29,9 +29,11 @@ const SOURCE_REPOSITORY = "kpkhxlgy0/unity-debugger-vscode";
 const SOURCE_BRANCH = "feature/unity-debugger-pure-mcp";
 
 export async function extractStandaloneHistory(options) {
-  const source = path.resolve(options.source);
+  const source = fs.realpathSync.native(path.resolve(options.source));
   const target = path.resolve(options.target);
-  const sourceRoot = git(source, ["rev-parse", "--show-toplevel"]).trim();
+  const sourceRoot = fs.realpathSync.native(
+    git(source, ["rev-parse", "--show-toplevel"]).trim(),
+  );
   const head = git(source, ["rev-parse", "HEAD"]).trim();
 
   if (!samePath(source, sourceRoot) || options.sourceRef !== head) {
