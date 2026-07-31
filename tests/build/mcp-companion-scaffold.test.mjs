@@ -101,6 +101,10 @@ test("normal scripts typecheck and test both standalone programs", () => {
   );
   assert.equal(scripts["build:launcher"], "node scripts/build-launcher.mjs");
   assert.equal(
+    scripts["test:package"],
+    "node --test --test-concurrency=1 tests/package/*.test.mjs",
+  );
+  assert.equal(
     scripts["verify:launcher"],
     "uv run --project launcher --locked --python 3.10 python launcher/scripts/verify_artifacts.py dist/launcher",
   );
