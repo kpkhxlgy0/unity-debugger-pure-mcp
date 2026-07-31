@@ -69,8 +69,18 @@ test("companion tags publish only the audited VSIX to Open VSX and GitHub", () =
 
   assert.equal(githubRelease.needs, "publish-openvsx");
   assert.deepEqual(githubRelease.permissions, { contents: "write" });
-  assert.match(runBodies(githubRelease), /gh release create/);
-  assert.doesNotMatch(runBodies(githubRelease), /\.whl|\.tar\.gz|PyPI|pypi/);
+  const githubReleaseCommands = runBodies(githubRelease);
+  assert.match(githubReleaseCommands, /gh release create/);
+  assert.match(
+    githubReleaseCommands,
+    /--repo "\$\{\{ github\.repository \}\}"/,
+    "checkout-free release jobs must bind gh to the current repository",
+  );
+  assert.equal(
+    githubRelease.steps.some((step) => step.uses === "actions/checkout@v4"),
+    false,
+  );
+  assert.doesNotMatch(githubReleaseCommands, /\.whl|\.tar\.gz|PyPI|pypi/);
 });
 
 test("launcher tags publish only audited Python distributions to PyPI and GitHub", () => {
@@ -126,8 +136,18 @@ test("launcher tags publish only audited Python distributions to PyPI and GitHub
 
   assert.equal(githubRelease.needs, "pypi-publish");
   assert.deepEqual(githubRelease.permissions, { contents: "write" });
-  assert.match(runBodies(githubRelease), /gh release create/);
-  assert.doesNotMatch(runBodies(githubRelease), /\.vsix|Open VSX|ovsx/i);
+  const githubReleaseCommands = runBodies(githubRelease);
+  assert.match(githubReleaseCommands, /gh release create/);
+  assert.match(
+    githubReleaseCommands,
+    /--repo "\$\{\{ github\.repository \}\}"/,
+    "checkout-free release jobs must bind gh to the current repository",
+  );
+  assert.equal(
+    githubRelease.steps.some((step) => step.uses === "actions/checkout@v4"),
+    false,
+  );
+  assert.doesNotMatch(githubReleaseCommands, /\.vsix|Open VSX|ovsx/i);
 });
 
 function readWorkflow(file) {
