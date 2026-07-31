@@ -211,6 +211,8 @@ describe("packaged MCP companion simulated session", () => {
     const subscriptions: vscode.Disposable[] = [];
     const session = new FakeVsCodeSession();
     const stoppedByVsCode = vi.fn(async () => undefined);
+    const publisherStarted = vi.fn(async () => undefined);
+    const publisherClosed = vi.fn(async () => undefined);
     let bridgeHost: BridgeHost | undefined;
     let descriptor: BridgeDescriptor | undefined;
 
@@ -282,6 +284,12 @@ describe("packaged MCP companion simulated session", () => {
             return descriptor;
           },
           close: () => bridgeHost!.close(),
+        };
+      },
+      async createLiveHostRegistrationPublisher() {
+        return {
+          start: publisherStarted,
+          close: publisherClosed,
         };
       },
       registerMcpProvider: () => disposable(),
@@ -484,6 +492,8 @@ describe("packaged MCP companion simulated session", () => {
     } finally {
       await client.close().catch(() => undefined);
       await runtime.dispose();
+      expect(publisherStarted).toHaveBeenCalledOnce();
+      expect(publisherClosed).toHaveBeenCalledOnce();
     }
   }, 30_000);
 });

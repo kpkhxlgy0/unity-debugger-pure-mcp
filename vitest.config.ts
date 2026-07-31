@@ -8,6 +8,7 @@ export default defineConfig({
       "tests/integration/**/*.test.ts",
     ],
     passWithNoTests: true,
+    fileParallelism: false,
     restoreMocks: true,
     testTimeout: 10_000,
     hookTimeout: 30_000,
