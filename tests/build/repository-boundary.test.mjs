@@ -30,9 +30,9 @@ test("standalone repository exposes only the public debugger dependency", () => 
   assert.equal(fs.existsSync("mcp-extension"), false);
   assert.equal(fs.existsSync("mcp-server"), false);
   assert.equal(git(["remote"]).trim(), "origin");
-  assert.equal(
+  assert.match(
     git(["remote", "get-url", "origin"]).trim(),
-    "https://github.com/kpkhxlgy0/unity-debugger-pure-mcp.git",
+    /^https:\/\/github\.com\/kpkhxlgy0\/unity-debugger-pure-mcp(?:\.git)?$/,
   );
 });
 

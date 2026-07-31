@@ -30,7 +30,7 @@ const SOURCE_BRANCH = "feature/unity-debugger-pure-mcp";
 
 export async function extractStandaloneHistory(options) {
   const source = fs.realpathSync.native(path.resolve(options.source));
-  const target = path.resolve(options.target);
+  const requestedTarget = path.resolve(options.target);
   const sourceRoot = fs.realpathSync.native(
     git(source, ["rev-parse", "--show-toplevel"]).trim(),
   );
@@ -46,15 +46,17 @@ export async function extractStandaloneHistory(options) {
       "Source repository must have a clean tracked and untracked state.",
     );
   }
-  if (fs.existsSync(target)) {
+  if (fs.existsSync(requestedTarget)) {
     throw new Error("Target path already exists.");
   }
+  const requestedTargetParent = path.dirname(requestedTarget);
+  if (!fs.existsSync(requestedTargetParent)) {
+    throw new Error("Target parent directory does not exist.");
+  }
+  const targetParent = fs.realpathSync.native(requestedTargetParent);
+  const target = path.join(targetParent, path.basename(requestedTarget));
   if (isWithin(source, target)) {
     throw new Error("Target must be outside the source repository.");
-  }
-  const targetParent = path.dirname(target);
-  if (!fs.existsSync(targetParent)) {
-    throw new Error("Target parent directory does not exist.");
   }
 
   let cloned = false;

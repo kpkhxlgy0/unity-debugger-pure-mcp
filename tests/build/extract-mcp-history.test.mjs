@@ -182,6 +182,25 @@ test("accepts a source root reached through a Windows directory junction", async
   assert.equal(report.retainedCommits.length, fixture.retained.length);
 });
 
+test("rejects a nested target reached through the source junction", async (t) => {
+  const fixture = createFixture(t);
+  const sourceAlias = path.join(path.dirname(fixture.source), "source-alias");
+  fs.symlinkSync(fixture.source, sourceAlias, "junction");
+  const nestedTarget = path.join(sourceAlias, "standalone");
+
+  await assert.rejects(
+    extractStandaloneHistory({
+      source: sourceAlias,
+      sourceRef: fixture.head,
+      target: nestedTarget,
+    }),
+    /Target must be outside the source repository/,
+  );
+
+  assert.equal(fs.existsSync(nestedTarget), false);
+  assert.equal(git(fixture.source, ["status", "--porcelain"]), "");
+});
+
 test("CLI rejects unknown, relative, and malformed arguments", () => {
   const cases = [
     ["--unknown", "value"],
