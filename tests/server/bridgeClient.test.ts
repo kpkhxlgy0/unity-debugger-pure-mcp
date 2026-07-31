@@ -67,6 +67,7 @@ describe("BridgeClient", () => {
     const callTool = vi.fn(async ({ input }: BridgeToolRequest) => input);
     const { descriptor } = await startHost(callTool);
     const client = await connect(descriptor);
+    expect(client.ready).toBe(true);
 
     await expect(client.callTool("unity_debug_status", { ordinal: 1 })).resolves.toEqual({
       ordinal: 1,
@@ -78,6 +79,8 @@ describe("BridgeClient", () => {
     expect(callTool.mock.calls[0]?.[0].connectionId).toBe(
       callTool.mock.calls[1]?.[0].connectionId,
     );
+    client.close();
+    expect(client.ready).toBe(false);
   });
 
   it("does not send a pre-aborted call", async () => {

@@ -61,6 +61,10 @@ export class BridgeClient {
     return client;
   }
 
+  get ready(): boolean {
+    return this.#state === "ready";
+  }
+
   callTool(name: ToolName, input: unknown, signal?: AbortSignal): Promise<unknown> {
     if (signal?.aborted === true) {
       return Promise.reject(new BridgeCallError(cancelledError()));
