@@ -93,9 +93,10 @@ or disabling the companion has no effect on normal debugging.
 ## 5. Architecture
 
 ```text
-VS Code built-in agent ─┐
-                       ├─ MCP over stdio ─> mcp-bridge.exe
-External MCP client ───┘                         |
+VS Code built-in agent ── native provider/direct mode ─┐
+External MCP client ── pinned uvx/registry mode ───────┤
+                                                       v
+                                               mcp-bridge.exe
                                                  | authenticated named pipe
                                                  v
                                   MCP companion extension host
@@ -246,36 +247,23 @@ workspace roots without user configuration.
 
 ### 8.2 External MCP clients
 
-The command **Unity Debugger Pure MCP: Install/Update External MCP Bridge** is
-the only operation that installs an external-client launcher.
+External clients launch an exactly pinned, zero-dependency Python package with
+`uvx`. The launcher derives its client root from the current directory, reads
+short-lived registrations from the current user's local application data,
+and selects exactly one canonical workspace match. It validates owner liveness,
+freshness, protocol compatibility, the bridge path, and the bridge SHA-256
+before starting registry mode. No username, installed extension path,
+environment shim, pipe name, or capability token appears in client settings.
 
-The command:
+The companion publishes and refreshes registrations but never edits external
+client configuration. The old `globalStorageUri` installer/current-pointer
+design is superseded and is not implemented. Multiple VS Code windows are
+disambiguated by canonical root; an ambiguous match returns
+`AMBIGUOUS_BRIDGE` rather than selecting a window.
 
-1. copies the bridge into a versioned directory under the companion's
-   `globalStorageUri`;
-2. atomically updates a stable launcher/current-version pointer;
-3. scopes the generated configuration to the current canonical workspace
-   roots; and
-4. displays configuration snippets for generic stdio clients, including Codex
-   and Claude-compatible forms.
-
-Persistent external-bridge storage has one stable launcher, one atomic
-`current.json` pointer, versioned bridge executables, and a `bridges` directory
-of live-window descriptors. External client configuration points only to the
-stable launcher and never to a VSIX installation directory.
-
-The stable launcher allows the VSIX to upgrade without leaving external MCP
-configuration pointed at a versioned extension installation directory. A
-running old bridge may finish naturally; new processes use the newly selected
-version.
-
-This command is explicit because it writes executable material into persistent
-extension storage. Normal companion installation does not modify external MCP
-client settings.
-
-External bridge processes read only live descriptors for their configured
-workspace roots. Multiple VS Code windows are disambiguated by canonical root;
-an ambiguous match returns `AMBIGUOUS_BRIDGE` rather than selecting a window.
+The registry-mode bridge re-reads registrations after connection loss. It does
+not replay an in-flight request; the next request reconnects. Direct and
+registry clients share one Extension Host session state and command queue.
 
 ## 9. MCP Tool Surface
 
@@ -580,7 +568,7 @@ specific interaction.
 3. Implement the local bridge, state projection, and command queue.
 4. Implement the MCP server and full tool surface.
 5. Register the VS Code MCP provider.
-6. Add the explicit external-client bridge installer and stable launcher.
+6. Add the live-registration registry and the pinned `uvx` external launcher.
 7. Complete simulated integration, security, and packaging gates.
 8. Perform the user-confirmed `MyGame` real-Editor acceptance run.
 9. Publish the API-capable debugger version before or with the companion's first

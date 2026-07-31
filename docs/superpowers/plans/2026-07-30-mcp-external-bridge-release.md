@@ -1,5 +1,12 @@
 # Unity Debugger Pure MCP External Bridge and Release Implementation Plan
 
+> **Superseded external-launcher design:** The `globalStorageUri` installer,
+> `.cmd` launcher, version pointer, and configuration-renderer tasks in this
+> historical plan must not be implemented. The approved replacement is the
+> version-pinned PyPI/`uvx` launcher and live-registration architecture in
+> `2026-07-31-unity-debugger-pure-mcp-pypi-launcher.md`. This file is retained
+> only as implementation history for the companion core and its release gates.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Add an explicit, upgrade-safe external MCP bridge installation path for Codex, Claude-compatible clients, and generic stdio clients; prove reconnect, workspace isolation, packaging, and the complete real-Editor flow before releasing the two dependent VSIXes.
