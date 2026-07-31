@@ -5,12 +5,11 @@ name: Release
     tags:
       - "v*"
 
-permissions:
-  contents: write
-
 jobs:
   release:
     runs-on: windows-latest
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -37,6 +36,15 @@ jobs:
         run: node scripts/verify-mcp-vsix.mjs dist/unity-debugger-pure-mcp-0.1.0.vsix
       - name: Verify the launcher artifacts directly
         run: uv run --project launcher --locked --python 3.10 python launcher/scripts/verify_artifacts.py dist/launcher
+      - name: Upload audited PyPI distributions
+        uses: actions/upload-artifact@v4
+        with:
+          name: pypi-distributions
+          path: |
+            dist/launcher/unity_debugger_pure_mcp-0.1.0-py3-none-win_amd64.whl
+            dist/launcher/unity_debugger_pure_mcp-0.1.0.tar.gz
+          if-no-files-found: error
+          retention-days: 1
       - name: Write release checksums
         shell: pwsh
         run: |
@@ -65,3 +73,23 @@ jobs:
             dist/launcher/unity_debugger_pure_mcp-0.1.0.tar.gz.sha256 `
             --verify-tag `
             --generate-notes
+
+  pypi-publish:
+    name: Publish launcher to PyPI
+    needs: release
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/p/unity-debugger-pure-mcp
+    permissions:
+      id-token: write
+    steps:
+      - name: Download audited PyPI distributions
+        uses: actions/download-artifact@v4
+        with:
+          name: pypi-distributions
+          path: dist
+      - name: Publish launcher distributions to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: dist

@@ -22,13 +22,12 @@ test("CI validates the independent package on Windows", () => {
   assert.doesNotMatch(commands, /ovsx|publish|remote add/i);
 });
 
-test("release rebuilds and audits versioned VSIX and launcher assets without publishing PyPI", () => {
+test("release rebuilds and audits versioned VSIX and launcher assets without marketplace publishing", () => {
   const workflow = readWorkflow(".github/workflows/release.yml");
   const job = workflow.jobs.release;
   const commands = runBodies(job);
 
   assert.deepEqual(workflow.on.push.tags, ["v*"]);
-  assert.equal(workflow.permissions.contents, "write");
   assert.equal(job["runs-on"], "windows-latest");
   assert.equal(setupNodeVersion(job), "26.5.0");
   assertUvSetup(job);
@@ -43,7 +42,51 @@ test("release rebuilds and audits versioned VSIX and launcher assets without pub
   assert.match(commands, /unity_debugger_pure_mcp-0\.1\.0-py3-none-win_amd64\.whl/);
   assert.match(commands, /unity_debugger_pure_mcp-0\.1\.0\.tar\.gz/);
   assert.match(commands, /gh release create/);
-  assert.doesNotMatch(commands, /ovsx|vsce publish|marketplace|remote add|uv publish|pypi/i);
+  assert.doesNotMatch(commands, /ovsx|vsce publish|marketplace|remote add|uv publish/i);
+});
+
+test("release hands only audited launcher distributions to an isolated PyPI OIDC job", () => {
+  const workflow = readWorkflow(".github/workflows/release.yml");
+  const release = workflow.jobs.release;
+  const publish = workflow.jobs["pypi-publish"];
+
+  assert.equal(workflow.permissions, undefined);
+  assert.deepEqual(release.permissions, { contents: "write" });
+
+  const upload = release.steps.find((step) =>
+    step.uses === "actions/upload-artifact@v4");
+  assert.ok(upload, "release job must upload the audited PyPI distributions");
+  assert.equal(upload.with.name, "pypi-distributions");
+  assert.equal(upload.with["if-no-files-found"], "error");
+  assert.deepEqual(
+    upload.with.path.split(/\r?\n/).map((entry) => entry.trim()).filter(Boolean),
+    [
+      "dist/launcher/unity_debugger_pure_mcp-0.1.0-py3-none-win_amd64.whl",
+      "dist/launcher/unity_debugger_pure_mcp-0.1.0.tar.gz",
+    ],
+  );
+
+  assert.equal(publish.needs, "release");
+  assert.equal(publish["runs-on"], "ubuntu-latest");
+  assert.deepEqual(publish.environment, {
+    name: "pypi",
+    url: "https://pypi.org/p/unity-debugger-pure-mcp",
+  });
+  assert.deepEqual(publish.permissions, { "id-token": "write" });
+
+  const download = publish.steps.find((step) =>
+    step.uses === "actions/download-artifact@v4");
+  assert.ok(download, "publisher must download the reviewed distributions");
+  assert.deepEqual(download.with, {
+    name: "pypi-distributions",
+    path: "dist",
+  });
+
+  const uploadToPyPi = publish.steps.find((step) =>
+    step.uses === "pypa/gh-action-pypi-publish@release/v1");
+  assert.ok(uploadToPyPi, "publisher must use the PyPA Trusted Publishing action");
+  assert.deepEqual(uploadToPyPi.with, { "packages-dir": "dist" });
+  assert.equal(runBodies(publish), "");
 });
 
 function readWorkflow(file) {
