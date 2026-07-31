@@ -95,6 +95,15 @@ test("normal scripts typecheck and test both standalone programs", () => {
   assert.equal(scripts["test:extension"], "vitest run tests/extension");
   assert.equal(scripts["test:server"], "vitest run tests/server");
   assert.equal(scripts["test:integration"], "vitest run tests/integration");
+  assert.equal(
+    scripts["test:launcher"],
+    "uv run --project launcher --locked --python 3.10 python -m unittest discover -s launcher/tests -v",
+  );
+  assert.equal(scripts["build:launcher"], "node scripts/build-launcher.mjs");
+  assert.equal(
+    scripts["verify:launcher"],
+    "uv run --project launcher --locked --python 3.10 python launcher/scripts/verify_artifacts.py dist/launcher",
+  );
 });
 
 test("lockfile pins stable extension and server workspace dependencies", () => {

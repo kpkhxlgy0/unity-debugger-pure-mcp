@@ -45,7 +45,8 @@
     "build:extension": "node esbuild.mjs",
     "build:server": "npm run build -w unity-debugger-pure-mcp-server",
     "build:bridge": "node scripts/build-mcp-bridge.mjs",
-    "build": "npm run build:extension && npm run build:bridge",
+    "build:launcher": "node scripts/build-launcher.mjs",
+    "build": "npm run build:extension && npm run build:bridge && npm run build:launcher",
     "typecheck:extension": "tsc -p tsconfig.json",
     "typecheck:server": "tsc -p server/tsconfig.json",
     "typecheck": "npm run typecheck:extension && npm run typecheck:server",
@@ -53,11 +54,13 @@
     "test:extension": "vitest run tests/extension",
     "test:server": "vitest run tests/server",
     "test:integration": "vitest run tests/integration",
+    "test:launcher": "uv run --project launcher --locked --python 3.10 python -m unittest discover -s launcher/tests -v",
     "test:package": "node --test tests/package/*.test.mjs",
-    "test": "npm run test:build && npm run test:extension && npm run test:server && npm run test:integration",
+    "test": "npm run test:build && npm run test:extension && npm run test:server && npm run test:integration && npm run test:launcher",
     "verify:vsix": "node scripts/verify-mcp-vsix.mjs dist/unity-debugger-pure-mcp-0.1.0.vsix",
+    "verify:launcher": "uv run --project launcher --locked --python 3.10 python launcher/scripts/verify_artifacts.py dist/launcher",
     "package:vsix": "vsce package --no-dependencies --out dist/unity-debugger-pure-mcp-0.1.0.vsix",
-    "package": "npm run build && npm run package:vsix && npm run verify:vsix"
+    "package": "npm run build && npm run package:vsix && npm run verify:vsix && npm run verify:launcher"
   },
   "devDependencies": {
     "@types/node": "26.1.1",

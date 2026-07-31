@@ -87,6 +87,13 @@ test("companion SEA and VSIX satisfy the isolated production contract", {
     [...files.keys()].some((name) => /(?:^|\/)adapter(?:\/|$)/i.test(name)),
     false,
   );
+  assert.equal(
+    [...files.keys()].some((name) =>
+      /(?:^|\/)(?:launcher|python|dist\/launcher)(?:\/|$)|\.(?:py|whl|tar\.gz)$/i.test(name),
+    ),
+    false,
+    "Companion VSIX must not contain the external Python launcher.",
+  );
 
   const manifest = JSON.parse(files.get("extension/package.json").bytes.toString("utf8"));
   assert.deepEqual(manifest.extensionDependencies, ["kpk.unity-debugger-pure"]);

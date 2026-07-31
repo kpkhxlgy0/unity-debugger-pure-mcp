@@ -74,17 +74,20 @@ export function createExternalTransport(options: {
   readonly workspace: string;
   readonly localAppData: string;
 }): StdioClientTransport {
+  const wheel = process.env.MCP_LAUNCHER_WHEEL;
   return new StdioClientTransport({
-    command: "uv",
-    args: [
-      "run",
-      "--project",
-      launcherRoot,
-      "--locked",
-      "--python",
-      "3.10",
-      "unity-debugger-pure-mcp",
-    ],
+    command: wheel === undefined ? "uv" : "uvx",
+    args: wheel === undefined
+      ? [
+          "run",
+          "--project",
+          launcherRoot,
+          "--locked",
+          "--python",
+          "3.10",
+          "unity-debugger-pure-mcp",
+        ]
+      : ["--from", wheel, "unity-debugger-pure-mcp"],
     cwd: options.workspace,
     env: childEnvironment(options.localAppData),
     stderr: "pipe",

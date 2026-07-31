@@ -25,9 +25,17 @@ test("standalone repository exposes only the public debugger dependency", () => 
   assert.equal(manifest.dependencies, undefined);
   assert.deepEqual(manifest.workspaces, ["server"]);
   assert.equal(manifest.devDependencies["js-yaml"], "4.3.0");
+  assert.equal(fs.existsSync("launcher/pyproject.toml"), true);
+  assert.equal(fs.existsSync("launcher/uv.lock"), true);
   assert.equal(fs.existsSync("mcp-extension"), false);
   assert.equal(fs.existsSync("mcp-server"), false);
   assert.equal(git(["remote"]).trim(), "");
+});
+
+test("the VSIX ignore boundary excludes every launcher and launcher artifact", () => {
+  const ignored = fs.readFileSync(".vscodeignore", "utf8");
+  assert.match(ignored, /^launcher\/\*\*$/m);
+  assert.match(ignored, /^dist\/launcher\/\*\*$/m);
 });
 
 test("runtime and tests never import debugger repository internals", () => {

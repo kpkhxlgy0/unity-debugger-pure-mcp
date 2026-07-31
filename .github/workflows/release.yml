@@ -17,6 +17,10 @@ jobs:
         with:
           node-version: 26.5.0
           cache: npm
+      - uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+        with:
+          version: "0.12.0"
+          python-version: "3.10"
       - run: npm ci
       - name: Verify tag and manifest version
         shell: pwsh
@@ -31,14 +35,22 @@ jobs:
       - run: npm run package
       - name: Verify the audited VSIX directly
         run: node scripts/verify-mcp-vsix.mjs dist/unity-debugger-pure-mcp-0.1.0.vsix
-      - name: Write release checksum
+      - name: Verify the launcher artifacts directly
+        run: uv run --project launcher --locked --python 3.10 python launcher/scripts/verify_artifacts.py dist/launcher
+      - name: Write release checksums
         shell: pwsh
         run: |
-          $artifact = "dist/unity-debugger-pure-mcp-0.1.0.vsix"
-          $sidecar = "dist/unity-debugger-pure-mcp-0.1.0.vsix.sha256"
-          $digest = (Get-FileHash -Algorithm SHA256 -LiteralPath $artifact).Hash.ToLowerInvariant()
-          "$digest  unity-debugger-pure-mcp-0.1.0.vsix" |
-            Set-Content -LiteralPath $sidecar -Encoding ascii -NoNewline
+          $artifacts = @(
+            "dist/unity-debugger-pure-mcp-0.1.0.vsix",
+            "dist/launcher/unity_debugger_pure_mcp-0.1.0-py3-none-win_amd64.whl",
+            "dist/launcher/unity_debugger_pure_mcp-0.1.0.tar.gz"
+          )
+          foreach ($artifact in $artifacts) {
+            $sidecar = "$artifact.sha256"
+            $digest = (Get-FileHash -Algorithm SHA256 -LiteralPath $artifact).Hash.ToLowerInvariant()
+            "$digest  $(Split-Path -Leaf $artifact)" |
+              Set-Content -LiteralPath $sidecar -Encoding ascii -NoNewline
+          }
       - name: Create GitHub release
         shell: pwsh
         env:
@@ -47,5 +59,9 @@ jobs:
           gh release create "${{ github.ref_name }}" `
             dist/unity-debugger-pure-mcp-0.1.0.vsix `
             dist/unity-debugger-pure-mcp-0.1.0.vsix.sha256 `
+            dist/launcher/unity_debugger_pure_mcp-0.1.0-py3-none-win_amd64.whl `
+            dist/launcher/unity_debugger_pure_mcp-0.1.0-py3-none-win_amd64.whl.sha256 `
+            dist/launcher/unity_debugger_pure_mcp-0.1.0.tar.gz `
+            dist/launcher/unity_debugger_pure_mcp-0.1.0.tar.gz.sha256 `
             --verify-tag `
             --generate-notes

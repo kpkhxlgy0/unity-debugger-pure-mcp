@@ -3,6 +3,7 @@
 .github/**
 .vscode/**
 docs/**
+launcher/**
 scripts/**
 server/**
 src/**
@@ -13,3 +14,4 @@ esbuild.mjs
 tsconfig.json
 vitest.config.ts
 dist/*.map
+dist/launcher/**
