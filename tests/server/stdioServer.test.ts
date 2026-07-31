@@ -1,12 +1,14 @@
 import { spawn, spawnSync, type ChildProcessWithoutNullStreams } from "node:child_process";
+import { EventEmitter } from "node:events";
 import path from "node:path";
 
-import { afterEach, beforeAll, describe, expect, it } from "vitest";
+import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 
 import { BridgeHost } from "../../src/bridge/bridgeHost.js";
 import { TOOL_NAMES } from "../../src/bridge/protocol.js";
 import {
   parseServerArgs,
+  runServer,
   type ServerCliOptions,
 } from "../../server/src/server.js";
 
@@ -33,12 +35,47 @@ afterEach(async () => {
   hosts.clear();
 });
 
-function fixtureOptions(): ServerCliOptions {
+function fixtureOptions(): Extract<ServerCliOptions, { readonly mode: "direct" }> {
   return Object.freeze({
+    mode: "direct",
     pipeName: "\\\\.\\pipe\\unity-debugger-pure-mcp-00000000-0000-4000-8000-000000000000",
     token: Buffer.alloc(32, 7).toString("base64url"),
     workspaceRoots: Object.freeze(["H:\\workspace\\Unity\\Tuanjie\\Projects\\MyGame"]),
   });
+}
+
+function registryArgs(): string[] {
+  return [
+    "--registry", "C:\\Users\\fixture\\AppData\\Local\\kpk\\unity-debugger-pure-mcp\\runtime\\v1",
+    "--client-root", "D:\\Unity\\Project",
+  ];
+}
+
+function runHarness(options: { readonly connectFailure?: boolean } = {}) {
+  const stdin = new EventEmitter();
+  const directBridge = { callTool: vi.fn(), close: vi.fn() };
+  const registryBridge = { callTool: vi.fn(), close: vi.fn() };
+  const protocol = { onclose: undefined as (() => void) | undefined };
+  const server = {
+    server: protocol,
+    connect: vi.fn(async () => {
+      if (options.connectFailure) {
+        throw new Error("private startup failure");
+      }
+    }),
+    close: vi.fn(async () => {
+      protocol.onclose?.();
+    }),
+  };
+  const dependencies = {
+    stdin,
+    signal: undefined as AbortSignal | undefined,
+    connectDirect: vi.fn(async () => directBridge),
+    connectRegistry: vi.fn(async () => registryBridge),
+    createServer: vi.fn(() => server),
+    createTransport: vi.fn(() => ({ marker: "transport" } as never)),
+  };
+  return { dependencies, directBridge, protocol, registryBridge, server, stdin };
 }
 
 describe("MCP stdio server", () => {
@@ -66,6 +103,102 @@ describe("MCP stdio server", () => {
       expect(() => parseServerArgs(args)).toThrow("Invalid MCP server arguments.");
     }
     expect(parseServerArgs(["--help"])).toEqual({ kind: "help" });
+  });
+
+  it("parses registry mode without accepting a capability on argv", () => {
+    expect(parseServerArgs([
+      "--registry", "C:\\Users\\fixture\\AppData\\Local\\kpk\\unity-debugger-pure-mcp\\runtime\\v1",
+      "--client-root", "D:\\Unity\\Project",
+    ])).toEqual({
+      kind: "run",
+      options: {
+        mode: "registry",
+        runtimeRoot: "C:\\Users\\fixture\\AppData\\Local\\kpk\\unity-debugger-pure-mcp\\runtime\\v1",
+        clientRoot: "D:\\Unity\\Project",
+      },
+    });
+  });
+
+  it.each([
+    ["mixed direct and registry", [
+      "--pipe", fixtureOptions().pipeName,
+      "--token", fixtureOptions().token,
+      "--registry", "C:\\runtime",
+      "--client-root", "D:\\project",
+    ]],
+    ["workspace in registry mode", [
+      "--registry", "C:\\runtime",
+      "--client-root", "D:\\project",
+      "--workspace", "D:\\project",
+    ]],
+    ["registry without client root", ["--registry", "C:\\runtime"]],
+    ["client root without registry", ["--client-root", "D:\\project"]],
+    ["duplicate registry", [
+      "--registry", "C:\\runtime",
+      "--registry", "C:\\runtime",
+      "--client-root", "D:\\project",
+    ]],
+    ["duplicate client root", [
+      "--registry", "C:\\runtime",
+      "--client-root", "D:\\project",
+      "--client-root", "D:\\project",
+    ]],
+    ["empty registry", ["--registry", "", "--client-root", "D:\\project"]],
+    ["overlong registry", ["--registry", "x".repeat(4_097), "--client-root", "D:\\project"]],
+    ["overlong client root", ["--registry", "C:\\runtime", "--client-root", "x".repeat(4_097)]],
+  ])("rejects %s", (_name, args) => {
+    expect(() => parseServerArgs(args)).toThrow("Invalid MCP server arguments.");
+  });
+
+  it("selects direct and registry bridge factories without changing provider argv", async () => {
+    const direct = runHarness();
+    const options = fixtureOptions();
+    await runServer([
+      "--pipe", options.pipeName,
+      "--token", options.token,
+      "--workspace", options.workspaceRoots[0]!,
+    ], direct.dependencies);
+    expect(direct.dependencies.connectDirect).toHaveBeenCalledWith(options);
+    expect(direct.dependencies.connectRegistry).not.toHaveBeenCalled();
+
+    const registry = runHarness();
+    await runServer(registryArgs(), registry.dependencies);
+    expect(registry.dependencies.connectRegistry).toHaveBeenCalledWith({
+      mode: "registry",
+      runtimeRoot: registryArgs()[1],
+      clientRoot: registryArgs()[3],
+    });
+    expect(registry.dependencies.connectDirect).not.toHaveBeenCalled();
+    expect(registryArgs()).not.toContain(options.token);
+  });
+
+  it("closes the selected bridge on stdin EOF and MCP close", async () => {
+    const eof = runHarness();
+    await runServer(registryArgs(), eof.dependencies);
+    eof.stdin.emit("end");
+    await vi.waitFor(() => expect(eof.server.close).toHaveBeenCalledOnce());
+    expect(eof.registryBridge.close).toHaveBeenCalledOnce();
+
+    const protocolClose = runHarness();
+    await runServer(registryArgs(), protocolClose.dependencies);
+    protocolClose.protocol.onclose?.();
+    expect(protocolClose.registryBridge.close).toHaveBeenCalledOnce();
+  });
+
+  it("closes the bridge when MCP startup fails or startup is cancelled", async () => {
+    const failed = runHarness({ connectFailure: true });
+    await expect(runServer(registryArgs(), failed.dependencies)).rejects.toThrow(
+      "private startup failure",
+    );
+    expect(failed.registryBridge.close).toHaveBeenCalledOnce();
+
+    const cancelled = runHarness();
+    const controller = new AbortController();
+    cancelled.dependencies.signal = controller.signal;
+    await runServer(registryArgs(), cancelled.dependencies);
+    controller.abort();
+    await vi.waitFor(() => expect(cancelled.server.close).toHaveBeenCalledOnce());
+    expect(cancelled.registryBridge.close).toHaveBeenCalledOnce();
   });
 
   it("keeps bundled --help stdout completely empty", () => {

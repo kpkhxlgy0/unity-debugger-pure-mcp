@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { SmokeStdoutValidator } from "../../scripts/mcp-smoke-stdout.mjs";
+import {
+  createSmokeArguments,
+  SmokeStdoutValidator,
+} from "../../scripts/mcp-smoke-stdout.mjs";
 
 const initializeResult = {
   protocolVersion: "2025-11-25",
@@ -22,6 +25,27 @@ const toolsResult = {
     },
   })),
 };
+
+test("registry SEA smoke argv never contains the pipe capability", () => {
+  const token = "secret-capability";
+  assert.deepEqual(
+    createSmokeArguments({
+      mode: "direct",
+      pipeName: "pipe-fixture",
+      token,
+    }),
+    ["--pipe", "pipe-fixture", "--token", token],
+  );
+  const registry = createSmokeArguments({
+    mode: "registry",
+    runtimeRoot: "C:\\runtime",
+    clientRoot: "D:\\project",
+  });
+  assert.deepEqual(registry, [
+    "--registry", "C:\\runtime", "--client-root", "D:\\project",
+  ]);
+  assert.equal(registry.includes(token), false);
+});
 
 test("SEA smoke stdout accepts exactly the initialize and tools/list responses", () => {
   const validator = new SmokeStdoutValidator({ expectedToolCount: 19 });

@@ -3,10 +3,14 @@ import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { setImmediate as waitForImmediate } from "node:timers/promises";
 import fs from "node:fs/promises";
 import { createServer } from "node:net";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { SmokeStdoutValidator } from "./mcp-smoke-stdout.mjs";
+import {
+  createSmokeArguments,
+  SmokeStdoutValidator,
+} from "./mcp-smoke-stdout.mjs";
 
 const requiredNodeVersion = "v26.5.0";
 if (process.version !== requiredNodeVersion) {
@@ -36,7 +40,8 @@ run(
 const executable = await fs.readFile(outputPath);
 verifyAmd64Pe(executable);
 const sha256 = createHash("sha256").update(executable).digest("hex");
-await smokeTest(outputPath);
+await smokeTest(outputPath, { mode: "direct" });
+await smokeTest(outputPath, { mode: "registry", sha256 });
 await verifyReviewedInventory(sha256);
 console.log(`MCP bridge SEA built and smoke-tested: ${path.relative(repositoryRoot, outputPath)}`);
 
@@ -55,9 +60,64 @@ function run(command, args, cwd) {
   }
 }
 
-async function smokeTest(executablePath) {
+async function smokeTest(executablePath, options) {
   const pipeName = `\\\\.\\pipe\\unity-debugger-pure-mcp-${randomUUID()}`;
   const token = randomBytes(32).toString("base64url");
+  let temporaryDirectory;
+  let childArgs;
+  let childEnvironment = {
+    SystemRoot: process.env.SystemRoot ?? "C:\\Windows",
+    PATH: "",
+  };
+  if (options.mode === "registry") {
+    temporaryDirectory = await fs.mkdtemp(
+      path.join(os.tmpdir(), "unity-debugger-pure-mcp-registry-smoke-"),
+    );
+    const localAppData = path.join(temporaryDirectory, "LocalAppData");
+    const runtimeRoot = path.join(
+      localAppData,
+      "kpk",
+      "unity-debugger-pure-mcp",
+      "runtime",
+      "v1",
+    );
+    await fs.mkdir(runtimeRoot, { recursive: true });
+    const [clientRoot, extensionRoot, bridgeExecutable] = await Promise.all([
+      fs.realpath(repositoryRoot),
+      fs.realpath(repositoryRoot),
+      fs.realpath(executablePath),
+    ]);
+    const instanceId = randomUUID();
+    await fs.writeFile(
+      path.join(runtimeRoot, `${instanceId}.json`),
+      JSON.stringify({
+        schemaVersion: 1,
+        instanceId,
+        ownerPid: process.pid,
+        updatedAt: new Date().toISOString(),
+        workspaceRoots: [clientRoot],
+        bridge: {
+          version: "0.1.0",
+          protocolVersion: 1,
+          extensionRoot,
+          executable: bridgeExecutable,
+          sha256: options.sha256,
+        },
+        pipe: { name: pipeName, token },
+      }),
+    );
+    childArgs = createSmokeArguments({
+      mode: "registry",
+      runtimeRoot,
+      clientRoot,
+    });
+    if (childArgs.includes(token)) {
+      throw new Error("Registry smoke arguments expose the bridge capability.");
+    }
+    childEnvironment = { ...childEnvironment, LOCALAPPDATA: localAppData };
+  } else {
+    childArgs = createSmokeArguments({ mode: "direct", pipeName, token });
+  }
   let protocolFailure;
   const sockets = new Set();
   const server = createServer((socket) => {
@@ -105,10 +165,10 @@ async function smokeTest(executablePath) {
   let stderr = "";
   const stdoutValidator = new SmokeStdoutValidator({ expectedToolCount: 19 });
   try {
-    child = spawn(executablePath, ["--pipe", pipeName, "--token", token], {
+    child = spawn(executablePath, childArgs, {
       cwd: repositoryRoot,
       stdio: ["pipe", "pipe", "pipe"],
-      env: { SystemRoot: process.env.SystemRoot ?? "C:\\Windows", PATH: "" },
+      env: childEnvironment,
       windowsHide: true,
     });
     child.stdout.setEncoding("utf8");
@@ -199,6 +259,9 @@ async function smokeTest(executablePath) {
       );
     }
     await waitForImmediate();
+    if (temporaryDirectory !== undefined) {
+      await fs.rm(temporaryDirectory, { recursive: true, force: true });
+    }
   }
 }
 

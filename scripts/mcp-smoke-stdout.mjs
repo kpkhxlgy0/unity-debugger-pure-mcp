@@ -1,3 +1,18 @@
+export function createSmokeArguments(options) {
+  if (options.mode === "direct") {
+    return ["--pipe", options.pipeName, "--token", options.token];
+  }
+  if (options.mode === "registry") {
+    return [
+      "--registry",
+      options.runtimeRoot,
+      "--client-root",
+      options.clientRoot,
+    ];
+  }
+  throw new Error("Unknown MCP bridge smoke mode.");
+}
+
 export class SmokeStdoutValidator {
   #stdout = "";
   #messages = new Map();
