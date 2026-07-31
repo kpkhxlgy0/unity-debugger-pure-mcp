@@ -52,6 +52,16 @@ export function bridgeUnavailableError(): StructuredToolError {
   };
 }
 
+export function ambiguousBridgeError(): StructuredToolError {
+  return Object.freeze({
+    code: "AMBIGUOUS_BRIDGE",
+    message: "More than one live debugger bridge matches this workspace.",
+    retryable: false,
+    currentState: "multiple_bridges",
+    action: "Close the extra VS Code window and retry the request.",
+  });
+}
+
 export function cancelledError(): StructuredToolError {
   return {
     code: "CANCELLED",

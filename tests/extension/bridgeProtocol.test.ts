@@ -7,6 +7,10 @@ import {
   TOOL_ERROR_CODES,
   TOOL_NAMES,
 } from "../../src/bridge/protocol.js";
+import {
+  STRUCTURED_TOOL_ERROR_SCHEMA,
+  ambiguousBridgeError,
+} from "../../src/tools/errors.js";
 
 describe("bridge framing", () => {
   it("decodes split and coalesced length-prefixed frames", () => {
@@ -208,5 +212,15 @@ describe("bridge framing", () => {
         },
       }).success,
     ).toBe(false);
+  });
+
+  it("constructs the stable ambiguous-bridge error", () => {
+    expect(STRUCTURED_TOOL_ERROR_SCHEMA.parse(ambiguousBridgeError())).toEqual({
+      code: "AMBIGUOUS_BRIDGE",
+      message: "More than one live debugger bridge matches this workspace.",
+      retryable: false,
+      currentState: "multiple_bridges",
+      action: "Close the extra VS Code window and retry the request.",
+    });
   });
 });
