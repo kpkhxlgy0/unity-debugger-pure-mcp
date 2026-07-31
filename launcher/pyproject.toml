@@ -1,0 +1,30 @@
+[build-system]
+requires = ["uv_build>=0.12.0,<0.13.0"]
+build-backend = "uv_build"
+
+[project]
+name = "unity-debugger-pure-mcp"
+version = "0.1.0"
+description = "Launcher for the Unity Debugger Pure MCP companion."
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = []
+license = { file = "LICENSE.txt" }
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "License :: OSI Approved :: MIT License",
+  "Operating System :: Microsoft :: Windows",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.10",
+]
+
+[project.urls]
+Repository = "https://github.com/kpkhxlgy0/unity-debugger-pure-mcp"
+Issues = "https://github.com/kpkhxlgy0/unity-debugger-pure-mcp/issues"
+
+[project.scripts]
+unity-debugger-pure-mcp = "unity_debugger_pure_mcp_launcher.__main__:main"
+
+[tool.uv.build-backend]
+module-name = "unity_debugger_pure_mcp_launcher"
+module-root = "src"

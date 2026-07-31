@@ -2,3 +2,9 @@ node_modules/
 dist/
 coverage/
 *.tsbuildinfo
+.venv/
+__pycache__/
+*.py[cod]
+launcher/build/
+launcher/dist/
+launcher/*.egg-info/
