@@ -30,6 +30,12 @@ same VS Code debug session, and use the existing per-session command queue.
 - Store live VS Code host registrations in a well-known current-user runtime
   directory resolved internally by the launcher and extension.
 - Configure Codex per project with `uvx` and a pinned launcher version.
+- Release the companion VSIX and Python launcher independently. Companion tags
+  use `companion-v<version>`; launcher tags use `launcher-v<version>`.
+- Keep VS Code Marketplace publication manual. Publish companion tags
+  automatically to Open VSX and a companion-only GitHub Release.
+- Publish launcher tags through PyPI Trusted Publishing and a launcher-only
+  GitHub Release.
 - Do not modify the debugger repository or its public API v1.
 - Do not add a user environment variable, user `PATH` entry, PowerShell shim,
   project-local executable, or machine-specific absolute path.
@@ -441,27 +447,82 @@ documentation. Package tests reject the bridge executable, VSIX, Adapter,
 Mono assemblies, Node bundle, source maps, tokens, registration fixtures with
 real paths, and repository build output.
 
-The first public release is `unity-debugger-pure-mcp==0.1.0`. The package name
-appeared unclaimed when this design was written, but it is not considered
-reserved until PyPI accepts the first release. If the name is unavailable at
-publication time, stop and request a naming decision rather than silently
-publishing under another name.
+The companion VSIX and launcher are independent release products even though
+they share this repository and compatibility tests. A release of one product
+must not rebuild, publish, or attach the other product's artifact.
 
-Release order:
+### 12.1 Companion release
 
-1. build and test the launcher from the local directory;
-2. build and inspect wheel and source distribution;
-3. test with `uvx --from <local-wheel>` against the packaged companion VSIX;
-4. publish and smoke-test on TestPyPI when practical;
-5. publish the reviewed artifacts to PyPI with explicit user authorization;
-6. test the exact public version with `uvx`; and
-7. only then commit the PyPI form of `.codex/config.toml` to a consuming
-   project.
+The companion release workflow is `.github/workflows/release-companion.yml`
+and accepts only `companion-v<version>` tags. The tag version must exactly
+match the root `package.json` version.
 
-The MCP repository currently has no remote. Trusted Publishing therefore
-requires a later remote repository setup. Until that exists, publication may
-use a project-scoped API token only with explicit user authorization; the token
-must never be written to the repository or logs.
+The workflow builds and audits the Windows companion VSIX, publishes that VSIX
+to Open VSX through the `openvsx` GitHub Environment and its `OVSX_PAT` secret,
+and then creates a GitHub Release for the companion tag containing only the
+VSIX and its SHA-256 sidecar. It never publishes Python artifacts or modifies
+the VS Code Marketplace.
+
+VS Code Marketplace publication remains manual because the available account
+uses Azure-authenticated publisher management rather than CI credentials. The
+one-time Marketplace listing for `kpk.unity-debugger-pure-mcp` version `0.1.0`
+was created manually before the first companion tag. Future companion versions
+may be uploaded manually before or after their automated Open VSX/GitHub
+release; the Marketplace page no longer needs to be created again. The three
+registries must receive the same source version, but byte-identical VSIX ZIPs
+are not required.
+
+### 12.2 Launcher release
+
+The launcher release workflow is `.github/workflows/release-launcher.yml` and
+accepts only `launcher-v<version>` tags. The tag version must exactly match
+`launcher/pyproject.toml`.
+
+The first public launcher release is
+`unity-debugger-pure-mcp==0.1.0`. The package name appeared unclaimed and still
+returned no PyPI project immediately before publication preparation, but it is
+not reserved until PyPI accepts the first release. If it becomes unavailable,
+stop for a naming decision rather than silently renaming the package.
+
+The launcher workflow builds and audits exactly one `py3-none-win_amd64` wheel
+and one source distribution. A dedicated publish job consumes only those two
+reviewed artifacts, uses the `pypi` GitHub Environment with job-scoped
+`id-token: write`, and publishes through PyPI Trusted Publishing without a
+stored API token. After PyPI succeeds, the workflow creates a GitHub Release
+for the launcher tag containing only the wheel, source distribution, and their
+SHA-256 sidecars. It never publishes or attaches a VSIX.
+
+The PyPI Pending Trusted Publisher must bind project
+`unity-debugger-pure-mcp` to GitHub owner `kpkhxlgy0`, repository
+`unity-debugger-pure-mcp`, workflow `release-launcher.yml`, and environment
+`pypi`.
+
+### 12.3 First companion publication order
+
+1. build and audit the companion VSIX from the reviewed source commit;
+2. manually upload version `0.1.0` to VS Code Marketplace to create the listing;
+3. verify the public Marketplace item is
+   `kpk.unity-debugger-pure-mcp` version `0.1.0`;
+4. create or verify the `kpk` Open VSX namespace and store its publishing token
+   only as the `OVSX_PAT` secret in the `openvsx` GitHub Environment;
+5. merge the reviewed release workflows;
+6. publish `companion-v0.1.0` with explicit user authorization; and
+7. verify Open VSX and the companion-only GitHub Release.
+
+Steps 2 and 3 are a one-time listing bootstrap and are already complete. They
+are not repeated for later companion releases.
+
+### 12.4 First launcher publication order
+
+1. build and test both paths locally;
+2. build and inspect the wheel and source distribution;
+3. test `uvx --from <local-wheel>` against the packaged companion VSIX;
+4. configure the Pending Trusted Publisher with the exact workflow identity;
+5. merge the reviewed release workflows;
+6. publish `launcher-v0.1.0` with explicit user authorization;
+7. test the exact public PyPI version with `uvx`; and
+8. only then add the pinned PyPI command to a consuming project's
+   `.codex/config.toml`.
 
 ## 13. Compatibility and Versioning
 
@@ -545,7 +606,7 @@ action to make a chosen code path execute.
 
 ## 15. Repository Boundaries
 
-All product source, tests, package metadata, release workflow, and design
+All product source, tests, package metadata, release workflows, and design
 changes belong to:
 
 ```text
@@ -575,7 +636,9 @@ The feature is complete when:
   and VS Code-closed behavior pass subprocess tests;
 - the debugger repository remains unchanged;
 - the companion VSIX and Python artifacts pass independent content and hash
-  audits; and
+  audits;
+- companion and launcher tags publish only their own independently versioned
+  artifacts through `release-companion.yml` and `release-launcher.yml`; and
 - the exact public PyPI version succeeds in the real MyGame acceptance flow.
 
 ## 17. Superseded Design
