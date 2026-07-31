@@ -22,71 +22,55 @@ test("CI validates the independent package on Windows", () => {
   assert.doesNotMatch(commands, /ovsx|publish|remote add/i);
 });
 
-test("release rebuilds and audits versioned VSIX and launcher assets without marketplace publishing", () => {
-  const workflow = readWorkflow(".github/workflows/release.yml");
-  const job = workflow.jobs.release;
-  const commands = runBodies(job);
+test("companion tags publish only the audited VSIX to Open VSX and GitHub", () => {
+  assert.equal(fs.existsSync(".github/workflows/release.yml"), false);
 
-  assert.deepEqual(workflow.on.push.tags, ["v*"]);
-  assert.equal(job["runs-on"], "windows-latest");
-  assert.equal(setupNodeVersion(job), "26.5.0");
-  assertUvSetup(job);
-  assert.match(commands, /npm ci/);
-  assert.match(commands, /package\.json/);
-  assert.match(commands, /github\.ref_name/);
-  assert.match(commands, /npm test/);
-  assert.match(commands, /npm run package/);
-  assert.match(commands, /verify-mcp-vsix\.mjs/);
-  assert.match(commands, /Get-FileHash/);
-  assert.match(commands, /unity-debugger-pure-mcp-0\.1\.0\.vsix\.sha256/);
-  assert.match(commands, /unity_debugger_pure_mcp-0\.1\.0-py3-none-win_amd64\.whl/);
-  assert.match(commands, /unity_debugger_pure_mcp-0\.1\.0\.tar\.gz/);
-  assert.match(commands, /gh release create/);
-  assert.doesNotMatch(commands, /ovsx|vsce publish|marketplace|remote add|uv publish/i);
-});
+  const workflow = readWorkflow(".github/workflows/release-companion.yml");
+  const build = workflow.jobs["build-companion"];
+  const openvsx = workflow.jobs["publish-openvsx"];
+  const githubRelease = workflow.jobs["github-release"];
+  const buildCommands = runBodies(build);
 
-test("release hands only audited launcher distributions to an isolated PyPI OIDC job", () => {
-  const workflow = readWorkflow(".github/workflows/release.yml");
-  const release = workflow.jobs.release;
-  const publish = workflow.jobs["pypi-publish"];
-
-  assert.equal(workflow.permissions, undefined);
-  assert.deepEqual(release.permissions, { contents: "write" });
-
-  const upload = release.steps.find((step) =>
-    step.uses === "actions/upload-artifact@v4");
-  assert.ok(upload, "release job must upload the audited PyPI distributions");
-  assert.equal(upload.with.name, "pypi-distributions");
-  assert.equal(upload.with["if-no-files-found"], "error");
-  assert.deepEqual(
-    upload.with.path.split(/\r?\n/).map((entry) => entry.trim()).filter(Boolean),
-    [
-      "dist/launcher/unity_debugger_pure_mcp-0.1.0-py3-none-win_amd64.whl",
-      "dist/launcher/unity_debugger_pure_mcp-0.1.0.tar.gz",
-    ],
+  assert.deepEqual(workflow.on.push.tags, ["companion-v*"]);
+  assert.equal(build["runs-on"], "windows-latest");
+  assert.deepEqual(build.permissions, { contents: "read" });
+  assert.equal(setupNodeVersion(build), "26.5.0");
+  assertUvSetup(build);
+  assert.match(buildCommands, /package\.json/);
+  assert.match(buildCommands, /companion-v/);
+  assert.match(buildCommands, /npm run package:companion/);
+  assert.match(buildCommands, /npm run test:package:companion/);
+  assert.doesNotMatch(
+    buildCommands,
+    /package:launcher|test:package:launcher|PyPI|pypi/,
   );
 
-  assert.equal(publish.needs, "release");
-  assert.equal(publish["runs-on"], "ubuntu-latest");
-  assert.deepEqual(publish.environment, {
-    name: "pypi",
-    url: "https://pypi.org/p/unity-debugger-pure-mcp",
-  });
-  assert.deepEqual(publish.permissions, { "id-token": "write" });
+  const upload = build.steps.find((step) =>
+    step.uses === "actions/upload-artifact@v4");
+  assert.ok(upload, "build job must upload the audited companion release");
+  assert.equal(upload.with.name, "companion-release");
+  assert.equal(upload.with["if-no-files-found"], "error");
+  assert.equal(upload.with["retention-days"], 1);
+  assert.deepEqual(lines(upload.with.path), [
+    "dist/unity-debugger-pure-mcp-${{ steps.version.outputs.version }}.vsix",
+    "dist/unity-debugger-pure-mcp-${{ steps.version.outputs.version }}.vsix.sha256",
+  ]);
 
-  const download = publish.steps.find((step) =>
-    step.uses === "actions/download-artifact@v4");
-  assert.ok(download, "publisher must download the reviewed distributions");
-  assert.deepEqual(download.with, {
-    name: "pypi-distributions",
-    path: "dist",
-  });
+  assert.equal(openvsx.needs, "build-companion");
+  assert.equal(openvsx.environment, "openvsx");
+  assert.equal(
+    openvsx.steps.some((step) => step.uses === "actions/download-artifact@v4"),
+    true,
+  );
+  const publish = openvsx.steps.find((step) => typeof step.run === "string");
+  assert.match(publish.run, /npx --yes ovsx@1\.0\.2 publish/);
+  assert.equal(publish.env.OVSX_PAT, "${{ secrets.OVSX_PAT }}");
+  assert.doesNotMatch(runBodies(openvsx), /--pat|vsce publish|marketplace/i);
 
-  const uploadToPyPi = publish.steps.find((step) =>
-    step.uses === "pypa/gh-action-pypi-publish@release/v1");
-  assert.ok(uploadToPyPi, "publisher must use the PyPA Trusted Publishing action");
-  assert.deepEqual(uploadToPyPi.with, { "packages-dir": "dist" });
-  assert.equal(runBodies(publish), "");
+  assert.equal(githubRelease.needs, "publish-openvsx");
+  assert.deepEqual(githubRelease.permissions, { contents: "write" });
+  assert.match(runBodies(githubRelease), /gh release create/);
+  assert.doesNotMatch(runBodies(githubRelease), /\.whl|\.tar\.gz|PyPI|pypi/);
 });
 
 function readWorkflow(file) {
@@ -114,4 +98,8 @@ function assertUvSetup(job) {
   );
   assert.equal(setup.with.version, "0.12.0");
   assert.equal(setup.with["python-version"], "3.10");
+}
+
+function lines(value) {
+  return value.split(/\r?\n/).map((entry) => entry.trim()).filter(Boolean);
 }

@@ -1,0 +1,94 @@
+name: Release Companion
+
+"on":
+  push:
+    tags:
+      - "companion-v*"
+
+jobs:
+  build-companion:
+    runs-on: windows-latest
+    permissions:
+      contents: read
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 26.5.0
+          cache: npm
+      - uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+        with:
+          version: "0.12.0"
+          python-version: "3.10"
+      - run: npm ci
+      - name: Verify companion tag and manifest version
+        id: version
+        shell: pwsh
+        run: |
+          $manifest = Get-Content package.json -Raw | ConvertFrom-Json
+          $version = $manifest.version
+          $expected = "companion-v$version"
+          if ("${{ github.ref_name }}" -ne $expected) {
+            throw "Tag must equal $expected"
+          }
+          "version=$version" >> $env:GITHUB_OUTPUT
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run package:companion
+      - run: npm run test:package:companion
+      - name: Write companion checksum
+        shell: pwsh
+        run: |
+          $artifact = "dist/unity-debugger-pure-mcp-${{ steps.version.outputs.version }}.vsix"
+          $digest = (Get-FileHash -Algorithm SHA256 -LiteralPath $artifact).Hash.ToLowerInvariant()
+          "$digest  $(Split-Path -Leaf $artifact)" |
+            Set-Content -LiteralPath "$artifact.sha256" -Encoding ascii -NoNewline
+      - name: Upload audited companion release
+        uses: actions/upload-artifact@v4
+        with:
+          name: companion-release
+          path: |
+            dist/unity-debugger-pure-mcp-${{ steps.version.outputs.version }}.vsix
+            dist/unity-debugger-pure-mcp-${{ steps.version.outputs.version }}.vsix.sha256
+          if-no-files-found: error
+          retention-days: 1
+
+  publish-openvsx:
+    runs-on: ubuntu-latest
+    needs: build-companion
+    environment: openvsx
+    permissions:
+      contents: read
+    steps:
+      - name: Download audited companion release
+        uses: actions/download-artifact@v4
+        with:
+          name: companion-release
+          path: dist
+      - name: Publish audited VSIX to Open VSX
+        run: npx --yes ovsx@1.0.2 publish "dist/unity-debugger-pure-mcp-${{ needs.build-companion.outputs.version }}.vsix"
+        env:
+          OVSX_PAT: ${{ secrets.OVSX_PAT }}
+
+  github-release:
+    runs-on: ubuntu-latest
+    needs: publish-openvsx
+    permissions:
+      contents: write
+    steps:
+      - name: Download audited companion release
+        uses: actions/download-artifact@v4
+        with:
+          name: companion-release
+          path: dist
+      - name: Create companion GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${{ github.ref_name }}" \
+            dist/*.vsix \
+            dist/*.vsix.sha256 \
+            --verify-tag \
+            --generate-notes
