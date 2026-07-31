@@ -73,6 +73,63 @@ test("companion tags publish only the audited VSIX to Open VSX and GitHub", () =
   assert.doesNotMatch(runBodies(githubRelease), /\.whl|\.tar\.gz|PyPI|pypi/);
 });
 
+test("launcher tags publish only audited Python distributions to PyPI and GitHub", () => {
+  const workflow = readWorkflow(".github/workflows/release-launcher.yml");
+  const build = workflow.jobs["build-launcher"];
+  const pypi = workflow.jobs["pypi-publish"];
+  const githubRelease = workflow.jobs["github-release"];
+  const buildCommands = runBodies(build);
+
+  assert.deepEqual(workflow.on.push.tags, ["launcher-v*"]);
+  assert.equal(build["runs-on"], "windows-latest");
+  assert.deepEqual(build.permissions, { contents: "read" });
+  assert.equal(setupNodeVersion(build), "26.5.0");
+  assertUvSetup(build);
+  assert.match(buildCommands, /launcher\/pyproject\.toml/);
+  assert.match(buildCommands, /launcher-v/);
+  assert.match(buildCommands, /npm run package:launcher/);
+  assert.match(buildCommands, /npm run test:package:launcher/);
+  assert.doesNotMatch(
+    buildCommands,
+    /package:companion|test:package:companion|\.vsix|Open VSX|ovsx/i,
+  );
+
+  const uploads = build.steps.filter((step) =>
+    step.uses === "actions/upload-artifact@v4");
+  assert.equal(uploads.length, 2);
+  assert.deepEqual(lines(
+    uploads.find((step) => step.with.name === "pypi-distributions").with.path,
+  ), [
+    "dist/launcher/unity_debugger_pure_mcp-${{ steps.version.outputs.version }}-py3-none-win_amd64.whl",
+    "dist/launcher/unity_debugger_pure_mcp-${{ steps.version.outputs.version }}.tar.gz",
+  ]);
+  assert.deepEqual(lines(
+    uploads.find((step) => step.with.name === "launcher-release").with.path,
+  ), [
+    "dist/launcher/unity_debugger_pure_mcp-${{ steps.version.outputs.version }}-py3-none-win_amd64.whl",
+    "dist/launcher/unity_debugger_pure_mcp-${{ steps.version.outputs.version }}-py3-none-win_amd64.whl.sha256",
+    "dist/launcher/unity_debugger_pure_mcp-${{ steps.version.outputs.version }}.tar.gz",
+    "dist/launcher/unity_debugger_pure_mcp-${{ steps.version.outputs.version }}.tar.gz.sha256",
+  ]);
+
+  assert.equal(pypi.needs, "build-launcher");
+  assert.deepEqual(pypi.environment, {
+    name: "pypi",
+    url: "https://pypi.org/p/unity-debugger-pure-mcp",
+  });
+  assert.deepEqual(pypi.permissions, { "id-token": "write" });
+  const publish = pypi.steps.find((step) =>
+    step.uses === "pypa/gh-action-pypi-publish@release/v1");
+  assert.ok(publish, "launcher publisher must use PyPI Trusted Publishing");
+  assert.deepEqual(publish.with, { "packages-dir": "dist" });
+  assert.equal(runBodies(pypi), "");
+
+  assert.equal(githubRelease.needs, "pypi-publish");
+  assert.deepEqual(githubRelease.permissions, { contents: "write" });
+  assert.match(runBodies(githubRelease), /gh release create/);
+  assert.doesNotMatch(runBodies(githubRelease), /\.vsix|Open VSX|ovsx/i);
+});
+
 function readWorkflow(file) {
   return yaml.load(fs.readFileSync(file, "utf8"));
 }
