@@ -8,6 +8,12 @@
 
 **Tech Stack:** TypeScript 7, Node.js 26.5.0 SEA, VS Code 1.101 extension API, MCP TypeScript SDK 1.30.0, Windows named pipes, Python 3.10+ standard library, uv 0.12.0, uv_build, wheel 0.47.0, Vitest, Node test runner, Python unittest.
 
+> **Release supersession (2026-07-31):** The coupled GitHub release step in
+> Task 7 and the publication steps in Task 8 are retained as historical
+> implementation evidence but are no longer operative. The approved
+> independent companion/launcher release specification and
+> `2026-07-31-independent-release-workflows.md` replace them.
+
 ## Global Constraints
 
 - Implement product code, tests, launcher packaging, and release changes only in `D:\Unity\unity-debugger-pure-mcp`.
@@ -470,6 +476,9 @@ The dual-client test must start one direct-mode bridge and one registry-mode bri
 
 ## Task 7: Build and audit launcher artifacts, VSIX, and CI assets
 
+> The coupled release-workflow instruction in this task is superseded by the
+> independent release plan referenced above.
+
 **Files:**
 
 - Create: `scripts/build-launcher.mjs`
@@ -552,6 +561,10 @@ The independent Python verifier must inspect ZIP/tar members without extraction,
   ```
 
 ## Task 8: Document, publish behind authorization, and configure MyGame
+
+> The publication instructions in this task are superseded by the independent
+> `companion-v<version>` and `launcher-v<version>` authorization gates. The
+> documentation and post-publication MyGame validation evidence remain useful.
 
 **Files:**
 

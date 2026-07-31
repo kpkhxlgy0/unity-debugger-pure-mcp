@@ -21,3 +21,11 @@ Install the external launcher only through an exactly pinned package version.
 The wheel and source distribution are release artifacts separate from the
 VSIX; the VSIX never embeds Python files, and the launcher never embeds the
 Adapter, Mono runtime, Node executable, or bridge executable.
+
+## Release credentials
+
+`OVSX_PAT` belongs only in the `openvsx` GitHub Environment and is exposed only
+to the Open VSX publication job. PyPI publication uses GitHub OIDC through the
+`pypi` Environment and does not store a PyPI token. Release logs, workflow
+configuration, artifacts, and support reports must never contain an Open VSX
+or PyPI token.

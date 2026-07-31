@@ -91,3 +91,13 @@ The package command creates and audits the companion VSIX, a
 retains an 11-file allowlist and contains no Python launcher; the launcher
 artifacts contain no Adapter, Mono runtime, Node bundle, live capability, or
 machine-specific path.
+
+## Release channels
+
+- VS Code Marketplace: manual upload under `kpk`; the initial `0.1.0` listing
+  exists.
+- Open VSX and companion GitHub Release: `companion-v<version>`.
+- PyPI and launcher GitHub Release: `launcher-v<version>`.
+
+The two automated release streams rebuild and audit only their own product.
+GitHub Actions never uploads to the VS Code Marketplace.
