@@ -95,7 +95,8 @@ test("launcher tags publish only audited Python distributions to PyPI and GitHub
   assert.deepEqual(build.permissions, { contents: "read" });
   assert.equal(setupNodeVersion(build), "26.5.0");
   assertUvSetup(build);
-  assert.match(buildCommands, /launcher\/pyproject\.toml/);
+  assert.match(buildCommands, /uv version --project launcher --short/);
+  assert.doesNotMatch(buildCommands, /tomllib|python\s+-c/i);
   assert.match(buildCommands, /launcher-v/);
   assert.match(buildCommands, /npm run package:launcher/);
   assert.match(buildCommands, /npm run test:package:launcher/);

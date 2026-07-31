@@ -27,7 +27,7 @@ jobs:
         id: version
         shell: pwsh
         run: |
-          $version = (& uv run --project launcher --locked --python 3.10 python -c "import tomllib; print(tomllib.load(open('launcher/pyproject.toml', 'rb'))['project']['version'])").Trim()
+          $version = (& uv version --project launcher --short).Trim()
           $expected = "launcher-v$version"
           if ("${{ github.ref_name }}" -ne $expected) {
             throw "Tag must equal $expected"
