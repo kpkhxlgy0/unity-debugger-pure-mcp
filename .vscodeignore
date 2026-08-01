@@ -13,5 +13,8 @@ package-lock.json
 esbuild.mjs
 tsconfig.json
 vitest.config.ts
-dist/*.map
-dist/launcher/**
+runtime-inventory.json
+dist/**
+!dist/extension.cjs
+!dist/mcp-bridge.exe
+!dist/runtime-inventory.json

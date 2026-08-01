@@ -11,13 +11,10 @@ import {
   createSmokeArguments,
   SmokeStdoutValidator,
 } from "./mcp-smoke-stdout.mjs";
+import { assertSupportedNodeVersion } from "./build-tool-version-policy.mjs";
+import { formatRuntimeInventory } from "./runtime-inventory.mjs";
 
-const requiredNodeVersion = "v26.5.0";
-if (process.version !== requiredNodeVersion) {
-  throw new Error(
-    `MCP bridge builds require Node ${requiredNodeVersion}; found ${process.version}.`,
-  );
-}
+assertSupportedNodeVersion(process.version);
 
 const repositoryRoot = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -42,7 +39,7 @@ verifyAmd64Pe(executable);
 const sha256 = createHash("sha256").update(executable).digest("hex");
 await smokeTest(outputPath, { mode: "direct" });
 await smokeTest(outputPath, { mode: "registry", sha256 });
-await verifyReviewedInventory(sha256);
+await writeGeneratedInventory(sha256);
 console.log(`MCP bridge SEA built and smoke-tested: ${path.relative(repositoryRoot, outputPath)}`);
 
 function run(command, args, cwd) {
@@ -303,25 +300,21 @@ function verifyAmd64Pe(bytes) {
   }
 }
 
-async function verifyReviewedInventory(sha256) {
+async function writeGeneratedInventory(sha256) {
   const inventoryPath = path.join(
     repositoryRoot,
+    "dist",
     "runtime-inventory.json",
   );
-  let inventory;
+  const temporaryPath = `${inventoryPath}.${randomUUID()}.tmp`;
   try {
-    inventory = JSON.parse(await fs.readFile(inventoryPath, "utf8"));
-  } catch {
-    throw new Error("MCP bridge runtime inventory is missing or malformed.");
-  }
-  if (
-    Object.keys(inventory).sort().join(",") !== "nodeVersion,sha256" ||
-    inventory.nodeVersion !== requiredNodeVersion ||
-    inventory.sha256 !== sha256
-  ) {
-    throw new Error(
-      "MCP bridge differs from the reviewed Node version or SHA-256 inventory. " +
-        `Candidate SHA-256: ${sha256}.`,
+    await fs.writeFile(
+      temporaryPath,
+      formatRuntimeInventory({ nodeVersion: process.version, sha256 }),
+      "utf8",
     );
+    await fs.rename(temporaryPath, inventoryPath);
+  } finally {
+    await fs.rm(temporaryPath, { force: true });
   }
 }

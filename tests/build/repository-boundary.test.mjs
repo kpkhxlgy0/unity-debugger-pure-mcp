@@ -36,10 +36,36 @@ test("standalone repository exposes only the public debugger dependency", () => 
   );
 });
 
-test("the VSIX ignore boundary excludes every launcher and launcher artifact", () => {
-  const ignored = fs.readFileSync(".vscodeignore", "utf8");
-  assert.match(ignored, /^launcher\/\*\*$/m);
-  assert.match(ignored, /^dist\/launcher\/\*\*$/m);
+test("the VSIX file list excludes source, launcher, and build-only artifacts", () => {
+  assert.equal(fs.existsSync("launcher/pyproject.toml"), true);
+  assert.equal(fs.existsSync("src/extension.ts"), true);
+
+  const result = spawnSync(
+    process.execPath,
+    ["node_modules/@vscode/vsce/vsce", "ls", "--no-dependencies"],
+    {
+      cwd: process.cwd(),
+      encoding: "utf8",
+      timeout: 30_000,
+      windowsHide: true,
+    },
+  );
+  assert.equal(result.error, undefined);
+  assert.equal(result.status, 0, result.stderr);
+
+  const files = result.stdout
+    .trim()
+    .split(/\r?\n/)
+    .map((file) => file.replaceAll("\\", "/"));
+  assert.ok(files.includes("package.json"));
+  assert.ok(files.includes("images/icon.png"));
+  assert.deepEqual(
+    files.filter((file) =>
+      /^(?:launcher|src|server|tests|scripts|docs)\//i.test(file) ||
+      /^dist\/(?:launcher|icon-|release-recovery)/i.test(file) ||
+      /(?:\.map|\.py|\.pyc)$/i.test(file)),
+    [],
+  );
 });
 
 test("runtime and tests never import debugger repository internals", () => {

@@ -260,7 +260,7 @@ export class LiveHostRegistrationPublisher {
   }
 }
 
-export async function verifyReviewedBridgeIntegrity(
+export async function verifyPackagedBridgeIntegrity(
   inventoryPath: string,
   bridgeExecutable: string,
 ): Promise<string> {
@@ -343,7 +343,7 @@ function processAlive(pid: number): boolean {
 }
 
 function hasExactInventory(value: unknown): value is {
-  readonly nodeVersion: "v26.5.0";
+  readonly nodeVersion: string;
   readonly sha256: string;
 } {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
@@ -351,7 +351,15 @@ function hasExactInventory(value: unknown): value is {
   }
   const record = value as Record<string, unknown>;
   return Object.keys(record).sort().join(",") === "nodeVersion,sha256" &&
-    record.nodeVersion === "v26.5.0" &&
+    typeof record.nodeVersion === "string" &&
+    isSupportedPackagedNodeVersion(record.nodeVersion) &&
     typeof record.sha256 === "string" &&
     /^[0-9a-f]{64}$/.test(record.sha256);
+}
+
+function isSupportedPackagedNodeVersion(value: string): boolean {
+  const match = /^v(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/.exec(value);
+  return match !== null &&
+    Number(match[1]) === 26 &&
+    Number(match[2]) >= 5;
 }

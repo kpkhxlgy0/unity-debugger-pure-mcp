@@ -19,6 +19,12 @@ test("CI validates the independent package on Windows", () => {
   assert.match(commands, /npm run typecheck/);
   assert.match(commands, /npm test/);
   assert.match(commands, /npm run package/);
+  assert.match(commands, /npm run verify:release-inventory/);
+  assert.ok(
+    commands.indexOf("npm run test:package") <
+      commands.indexOf("npm run verify:release-inventory"),
+    "CI must compare release inventory after the final package test rebuild.",
+  );
   assert.doesNotMatch(commands, /ovsx|publish|remote add/i);
 });
 
@@ -39,6 +45,12 @@ test("companion tags publish only the audited VSIX to Open VSX and GitHub", () =
   assert.match(buildCommands, /package\.json/);
   assert.match(buildCommands, /companion-v/);
   assert.match(buildCommands, /npm run package:companion/);
+  assert.match(buildCommands, /npm run verify:release-inventory/);
+  assert.ok(
+    buildCommands.indexOf("npm run test:package:companion") <
+      buildCommands.indexOf("npm run verify:release-inventory"),
+    "Companion release must compare inventory after the final package test rebuild.",
+  );
   assert.match(buildCommands, /npm run test:package:companion/);
   assert.doesNotMatch(
     buildCommands,
@@ -100,6 +112,7 @@ test("launcher tags publish only audited Python distributions to PyPI and GitHub
   assert.match(buildCommands, /launcher-v/);
   assert.match(buildCommands, /npm run package:launcher/);
   assert.match(buildCommands, /npm run test:package:launcher/);
+  assert.doesNotMatch(buildCommands, /verify:release-inventory/);
   assert.doesNotMatch(
     buildCommands,
     /package:companion|test:package:companion|\.vsix|Open VSX|ovsx/i,

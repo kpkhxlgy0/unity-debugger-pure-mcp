@@ -3,7 +3,8 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-const requiredUvVersion = "uv 0.12.0";
+import { assertSupportedUvVersionOutput } from "./build-tool-version-policy.mjs";
+
 const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const outputRoot = path.join(repositoryRoot, "dist", "launcher");
 const rawWheel = "unity_debugger_pure_mcp-0.1.0-py3-none-any.whl";
@@ -15,9 +16,7 @@ if (process.platform !== "win32" || process.arch !== "x64") {
 }
 
 const uvVersion = run("uv", ["--version"]).stdout.trim();
-if (!/^uv 0\.12\.0(?:\s|$)/.test(uvVersion)) {
-  throw new Error(`Launcher builds require ${requiredUvVersion}; found ${uvVersion}.`);
-}
+assertSupportedUvVersionOutput(uvVersion);
 
 run("uv", ["build", "launcher", "--out-dir", "dist/launcher", "--clear"]);
 assertArtifacts(new Set([rawWheel, sdist, ".gitignore"]));

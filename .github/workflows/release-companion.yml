@@ -38,6 +38,7 @@ jobs:
       - run: npm test
       - run: npm run package:companion
       - run: npm run test:package:companion
+      - run: npm run verify:release-inventory
       - name: Write companion checksum
         shell: pwsh
         run: |

@@ -107,6 +107,7 @@ function harness(options: {
   readonly failPublisherClose?: boolean;
   readonly deferPublisherClose?: boolean;
   readonly failProvider?: boolean;
+  readonly failCommands?: boolean;
   readonly platform?: NodeJS.Platform;
   readonly arch?: string;
 } = {}) {
@@ -172,6 +173,13 @@ function harness(options: {
       log.push(`register:tracker:${type}`);
       listeners.tracker = tracker;
       return makeDisposable("tracker");
+    },
+    registerExternalClientCommands() {
+      log.push("register:commands");
+      if (options.failCommands) {
+        throw new Error("commands failed");
+      }
+      return makeDisposable("commands");
     },
     createBridgeHost(handler) {
       bridgeHandler = handler;
@@ -264,12 +272,13 @@ describe("MCP companion extension composition", () => {
       "register:terminate",
       "register:breakpoints",
       `register:tracker:${DEBUG_TYPE}`,
+      "register:commands",
       "listen",
       `create:publisher:${PIPE_NAME}`,
       "start:publisher",
       "register:provider:unity-debugger-pure-mcp.server",
     ]);
-    expect(setup.subscriptions).toHaveLength(7);
+    expect(setup.subscriptions).toHaveLength(8);
     const definitions = await setup.provider().provideMcpServerDefinitions({
       isCancellationRequested: false,
       onCancellationRequested: (() => ({ dispose() {} })) as vscode.Event<unknown>,
@@ -282,10 +291,11 @@ describe("MCP companion extension composition", () => {
     });
 
     await runtime.dispose();
-    expect(setup.log.slice(-7)).toEqual([
+    expect(setup.log.slice(-8)).toEqual([
       "dispose:provider",
       "close:publisher",
       "close:bridge",
+      "dispose:commands",
       "dispose:tracker",
       "dispose:breakpoints",
       "dispose:terminate",
@@ -554,8 +564,9 @@ describe("MCP companion extension composition", () => {
     await expect(activateWithDependencies(setup.context, setup.boundary))
       .rejects.toThrow("listen failed");
     expect(setup.context.subscriptions).toHaveLength(0);
-    expect(setup.log.slice(-5)).toEqual([
+    expect(setup.log.slice(-6)).toEqual([
       "close:bridge",
+      "dispose:commands",
       "dispose:tracker",
       "dispose:breakpoints",
       "dispose:terminate",
@@ -578,9 +589,10 @@ describe("MCP companion extension composition", () => {
     const setup = harness(options);
     await expect(activateWithDependencies(setup.context, setup.boundary)).rejects.toThrow(failure);
     expect(setup.context.subscriptions).toHaveLength(0);
-    expect(setup.log.slice(-6)).toEqual([
+    expect(setup.log.slice(-7)).toEqual([
       "close:publisher",
       "close:bridge",
+      "dispose:commands",
       "dispose:tracker",
       "dispose:breakpoints",
       "dispose:terminate",
@@ -597,14 +609,36 @@ describe("MCP companion extension composition", () => {
     expect(setup.subscriptions).toHaveLength(0);
   });
 
+  it("disposes existing listeners and never creates a pipe when command registration fails", async () => {
+    const setup = harness({ failCommands: true });
+
+    await expect(activateWithDependencies(setup.context, setup.boundary))
+      .rejects.toThrow("commands failed");
+
+    expect(setup.context.subscriptions).toHaveLength(0);
+    expect(setup.log).toEqual([
+      "activate-api",
+      "register:start",
+      "register:terminate",
+      "register:breakpoints",
+      `register:tracker:${DEBUG_TYPE}`,
+      "register:commands",
+      "dispose:tracker",
+      "dispose:breakpoints",
+      "dispose:terminate",
+      "dispose:start",
+    ]);
+  });
+
   it("still disposes every lifecycle hook when bridge shutdown fails", async () => {
     const setup = harness({ failClose: true });
     const runtime = await activateWithDependencies(setup.context, setup.boundary);
     await expect(runtime.dispose()).rejects.toThrow("close failed");
-    expect(setup.log.slice(-7)).toEqual([
+    expect(setup.log.slice(-8)).toEqual([
       "dispose:provider",
       "close:publisher",
       "close:bridge",
+      "dispose:commands",
       "dispose:tracker",
       "dispose:breakpoints",
       "dispose:terminate",
@@ -616,10 +650,11 @@ describe("MCP companion extension composition", () => {
     const setup = harness({ failPublisherClose: true });
     const runtime = await activateWithDependencies(setup.context, setup.boundary);
     await expect(runtime.dispose()).rejects.toThrow("publisher close failed");
-    expect(setup.log.slice(-7)).toEqual([
+    expect(setup.log.slice(-8)).toEqual([
       "dispose:provider",
       "close:publisher",
       "close:bridge",
+      "dispose:commands",
       "dispose:tracker",
       "dispose:breakpoints",
       "dispose:terminate",
@@ -655,10 +690,11 @@ describe("MCP companion extension composition", () => {
     }
     await deactivation;
 
-    expect(setup.log.slice(-7)).toEqual([
+    expect(setup.log.slice(-8)).toEqual([
       "dispose:provider",
       "close:publisher",
       "close:bridge",
+      "dispose:commands",
       "dispose:tracker",
       "dispose:breakpoints",
       "dispose:terminate",

@@ -6,6 +6,7 @@ await build({
   external: ["vscode"],
   format: "cjs",
   logLevel: "info",
+  mainFields: ["module", "main"],
   outfile: "dist/extension.cjs",
   platform: "node",
   sourcemap: true,

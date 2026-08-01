@@ -14,7 +14,7 @@ import {
 } from "../../src/external/liveHostRegistration.js";
 import {
   LiveHostRegistrationPublisher,
-  verifyReviewedBridgeIntegrity,
+  verifyPackagedBridgeIntegrity,
   type LiveHostPublisherClock,
   type LiveHostPublisherFileSystem,
   type LiveHostWorkspaceSnapshot,
@@ -312,30 +312,47 @@ describe("live host registration publisher", () => {
   });
 });
 
-describe("reviewed bridge integrity", () => {
-  it("returns the reviewed digest only when inventory and bridge bytes agree", async () => {
+describe("packaged bridge integrity", () => {
+  it.each(["v26.5.0", "v26.5.1", "v26.6.0"])(
+    "accepts compatible packaged inventory %s",
+    async (nodeVersion) => {
+      const setup = await harness();
+      const inventory = path.join(setup.base, "runtime-inventory.json");
+      const digest = createHash("sha256").update(setup.bridgeBytes).digest("hex");
+      await fs.writeFile(inventory, JSON.stringify({ nodeVersion, sha256: digest }));
+
+      await expect(verifyPackagedBridgeIntegrity(inventory, setup.bridgeExecutable))
+        .resolves.toBe(digest);
+    },
+  );
+
+  it.each(["v26.4.9", "v26.5.1-rc.1", "v27.0.0", "26.5.1"])(
+    "rejects unsupported packaged inventory %s",
+    async (nodeVersion) => {
+      const setup = await harness();
+      const inventory = path.join(setup.base, "runtime-inventory.json");
+      const digest = createHash("sha256").update(setup.bridgeBytes).digest("hex");
+      await fs.writeFile(inventory, JSON.stringify({ nodeVersion, sha256: digest }));
+
+      await expect(verifyPackagedBridgeIntegrity(inventory, setup.bridgeExecutable))
+        .rejects.toThrow("MCP bridge runtime inventory is invalid.");
+    },
+  );
+
+  it("rejects malformed, extended, or mismatched packaged inventory", async () => {
     const setup = await harness();
     const inventory = path.join(setup.base, "runtime-inventory.json");
     const digest = createHash("sha256").update(setup.bridgeBytes).digest("hex");
-    await fs.writeFile(inventory, JSON.stringify({ nodeVersion: "v26.5.0", sha256: digest }));
-
-    await expect(verifyReviewedBridgeIntegrity(inventory, setup.bridgeExecutable))
-      .resolves.toBe(digest);
-  });
-
-  it("rejects malformed, extended, or mismatched reviewed inventory", async () => {
-    const setup = await harness();
-    const inventory = path.join(setup.base, "runtime-inventory.json");
     const cases: unknown[] = [
       null,
-      { nodeVersion: "v26.5.1", sha256: "a".repeat(64) },
       { nodeVersion: "v26.5.0", sha256: "a".repeat(64), extra: true },
       { nodeVersion: "v26.5.0", sha256: "A".repeat(64) },
+      { nodeVersion: "v26.5.0", sha256: digest.replace(/^./, digest[0] === "a" ? "b" : "a") },
     ];
 
     for (const value of cases) {
       await fs.writeFile(inventory, JSON.stringify(value));
-      await expect(verifyReviewedBridgeIntegrity(inventory, setup.bridgeExecutable))
+      await expect(verifyPackagedBridgeIntegrity(inventory, setup.bridgeExecutable))
         .rejects.toThrow("MCP bridge runtime inventory is invalid.");
     }
   });

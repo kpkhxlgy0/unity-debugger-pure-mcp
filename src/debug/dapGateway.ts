@@ -286,7 +286,7 @@ function parseEvaluation(value: unknown): DapEvaluation {
 }
 
 function parseControlResponse(value: unknown, allowsUndefined: boolean): void {
-  if (allowsUndefined && value === undefined) {
+  if (allowsUndefined && (value === undefined || value === null)) {
     return;
   }
   const input = record(value);

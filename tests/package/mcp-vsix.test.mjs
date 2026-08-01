@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import AdmZip from "adm-zip";
@@ -10,7 +11,7 @@ const repositoryRoot = path.resolve(import.meta.dirname, "../..");
 const artifactPath = path.join(
   repositoryRoot,
   "dist",
-  "unity-debugger-pure-mcp-0.1.0.vsix",
+  "unity-debugger-pure-mcp-0.1.1.vsix",
 );
 const inventoryPath = path.join(repositoryRoot, "runtime-inventory.json");
 const verifierPath = path.join(repositoryRoot, "scripts", "verify-mcp-vsix.mjs");
@@ -65,9 +66,10 @@ test("companion SEA and VSIX satisfy the isolated production contract", {
     "extension/changelog.md",
     "extension/security.md",
     "extension/third_party_notices.md",
-    "extension/runtime-inventory.json",
+    "extension/images/icon.png",
     "extension/dist/extension.cjs",
     "extension/dist/mcp-bridge.exe",
+    "extension/dist/runtime-inventory.json",
   ]);
   assert.deepEqual(
     [...files.keys()].filter((name) => !allowed.has(name)),
@@ -98,19 +100,43 @@ test("companion SEA and VSIX satisfy the isolated production contract", {
   const manifest = JSON.parse(files.get("extension/package.json").bytes.toString("utf8"));
   assert.deepEqual(manifest.extensionDependencies, ["kpk.unity-debugger-pure"]);
   assert.equal(manifest.name, "unity-debugger-pure-mcp");
-  assert.equal(manifest.version, "0.1.0");
+  assert.equal(manifest.version, "0.1.1");
+  assert.equal(manifest.icon, "images/icon.png");
   assert.equal(manifest.main, "./dist/extension.cjs");
+  assert.deepEqual(manifest.contributes.commands, [
+    {
+      command: "unityDebuggerPureMcp.configureCodex",
+      title: "Configure Codex",
+      category: "Unity Debugger Pure MCP",
+    },
+    {
+      command: "unityDebuggerPureMcp.configureClaudeCode",
+      title: "Configure Claude Code",
+      category: "Unity Debugger Pure MCP",
+    },
+  ]);
+  assert.equal(manifest.dependencies, undefined);
+  assert.equal(files.size, 12);
+
+  verifyPngIcon(files.get("extension/images/icon.png").bytes);
+  verifyExtensionBundleLoads(files.get("extension/dist/extension.cjs").bytes);
 
   const executable = files.get("extension/dist/mcp-bridge.exe").bytes;
   verifyAmd64Pe(executable);
-  const inventory = JSON.parse(
-    files.get("extension/runtime-inventory.json").bytes.toString("utf8"),
+  const packagedInventoryText = files
+    .get("extension/dist/runtime-inventory.json")
+    .bytes.toString("utf8");
+  const generatedInventoryText = fs.readFileSync(
+    path.join(repositoryRoot, "dist", "runtime-inventory.json"),
+    "utf8",
   );
+  const inventory = JSON.parse(packagedInventoryText);
   assert.equal(
-    files.get("extension/runtime-inventory.json").bytes.toString("utf8"),
-    reviewedInventory,
+    packagedInventoryText,
+    generatedInventoryText,
   );
-  assert.equal(inventory.nodeVersion, "v26.5.0");
+  assert.equal(files.has("extension/runtime-inventory.json"), false);
+  assert.equal(inventory.nodeVersion, process.version);
   assert.equal(
     inventory.sha256,
     createHash("sha256").update(executable).digest("hex"),
@@ -153,6 +179,61 @@ test("production verifier rejects case-insensitive duplicate directories", () =>
     const result = runVerifier(tamperedPath);
     assert.notEqual(result.status, 0, "Production verifier accepted duplicate directories.");
     assert.match(result.stderr, /Duplicate ZIP path: EXTENSION\/DIST\//);
+  });
+});
+
+test("production verifier rejects a package without the configuration commands", () => {
+  withTamperedArtifact("missing-configuration-commands", (archive) => {
+    const entry = archive.getEntry("extension/package.json");
+    const manifest = JSON.parse(entry.getData().toString("utf8"));
+    delete manifest.contributes.commands;
+    archive.updateFile("extension/package.json", Buffer.from(JSON.stringify(manifest)));
+  }, (tamperedPath) => {
+    const result = runVerifier(tamperedPath);
+    assert.notEqual(result.status, 0, "Production verifier accepted a manifest without commands.");
+    assert.match(result.stderr, /wrong production identity, dependency, or commands/);
+  });
+});
+
+test("production verifier rejects unsupported packaged Node identities", () => {
+  for (const nodeVersion of [
+    "v26.4.9",
+    "v26.5.1-rc.1",
+    "v27.0.0",
+    "26.5.1",
+  ]) {
+    withTamperedArtifact(`unsupported-node-${nodeVersion.replaceAll(".", "-")}`, (archive) => {
+      updateInventory(archive, (inventory) => ({ ...inventory, nodeVersion }));
+    }, (tamperedPath) => {
+      const result = runVerifier(tamperedPath);
+      assert.notEqual(result.status, 0, `Verifier accepted ${nodeVersion}.`);
+      assert.match(result.stderr, /runtime inventory is invalid/i);
+    });
+  }
+});
+
+test("production verifier rejects extended packaged inventory", () => {
+  withTamperedArtifact("extended-inventory", (archive) => {
+    updateInventory(archive, (inventory) => ({ ...inventory, extra: true }));
+  }, (tamperedPath) => {
+    const result = runVerifier(tamperedPath);
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /runtime inventory is invalid/i);
+  });
+});
+
+test("production verifier rejects a packaged SEA digest mismatch", () => {
+  withTamperedArtifact("inventory-digest-mismatch", (archive) => {
+    updateInventory(archive, (inventory) => ({
+      ...inventory,
+      sha256: inventory.sha256 === "a".repeat(64)
+        ? "b".repeat(64)
+        : "a".repeat(64),
+    }));
+  }, (tamperedPath) => {
+    const result = runVerifier(tamperedPath);
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /digest does not match/i);
   });
 });
 
@@ -202,7 +283,7 @@ function auditArchiveEntries(archive) {
     );
     if (entry.isDirectory) {
       assert.equal(
-        new Set(["extension/", "extension/dist/"]).has(key),
+        new Set(["extension/", "extension/dist/", "extension/images/"]).has(key),
         true,
         `Unexpected companion package directory: ${normalized}`,
       );
@@ -211,6 +292,46 @@ function auditArchiveEntries(archive) {
     files.set(key, { name: normalized, bytes: entry.getData() });
   }
   return files;
+}
+
+function updateInventory(archive, update) {
+  const inventoryPath = "extension/dist/runtime-inventory.json";
+  const inventory = JSON.parse(archive.getEntry(inventoryPath).getData().toString("utf8"));
+  archive.updateFile(
+    inventoryPath,
+    Buffer.from(`${JSON.stringify(update(inventory), null, 2)}\n`, "utf8"),
+  );
+}
+
+function verifyExtensionBundleLoads(bytes) {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "udp-mcp-extension-bundle-"));
+  try {
+    const bundlePath = path.join(directory, "extension.cjs");
+    fs.writeFileSync(bundlePath, bytes);
+    const loader = [
+      "const Module = require('node:module');",
+      "const originalLoad = Module._load;",
+      "Module._load = function(request, parent, isMain) {",
+      "  if (request === 'vscode') return {};",
+      "  return originalLoad.call(this, request, parent, isMain);",
+      "};",
+      "require(process.argv[1]);",
+    ].join("\n");
+    const result = spawnSync(process.execPath, ["-e", loader, bundlePath], {
+      cwd: directory,
+      encoding: "utf8",
+      timeout: 10_000,
+      windowsHide: true,
+    });
+    assert.equal(
+      result.status,
+      0,
+      `Production extension bundle failed to load:\n${result.stdout}\n${result.stderr}`,
+    );
+    assert.equal(result.stdout, "");
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
 }
 
 function withTamperedArtifact(name, mutate, inspect) {
@@ -341,4 +462,16 @@ function verifyAmd64Pe(bytes) {
     "SEA has no valid PE signature.",
   );
   assert.equal(bytes.readUInt16LE(peOffset + 4), 0x8664, "SEA is not AMD64.");
+}
+
+function verifyPngIcon(bytes) {
+  assert.deepEqual(
+    [...bytes.subarray(0, 8)],
+    [137, 80, 78, 71, 13, 10, 26, 10],
+  );
+  assert.equal(bytes.toString("ascii", 12, 16), "IHDR");
+  assert.equal(bytes.readUInt32BE(16), 512);
+  assert.equal(bytes.readUInt32BE(20), 512);
+  assert.equal(bytes[24], 8);
+  assert.ok(bytes[25] === 2 || bytes[25] === 6, "Icon must be RGB or RGBA.");
 }

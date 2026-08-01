@@ -1,15 +1,12 @@
 import { createHash } from "node:crypto";
-import fs from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import AdmZip from "adm-zip";
 
-const requiredNodeVersion = "v26.5.0";
-if (process.version !== requiredNodeVersion) {
-  throw new Error(
-    `Companion VSIX verification requires Node ${requiredNodeVersion}; found ${process.version}.`,
-  );
-}
+import { assertSupportedNodeVersion } from "./build-tool-version-policy.mjs";
+import { parseRuntimeInventory } from "./runtime-inventory.mjs";
+
+assertSupportedNodeVersion(process.version);
 
 const repositoryRoot = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -66,9 +63,10 @@ const required = [
   "extension/changelog.md",
   "extension/security.md",
   "extension/third_party_notices.md",
-  "extension/runtime-inventory.json",
+  "extension/images/icon.png",
   "extension/dist/extension.cjs",
   "extension/dist/mcp-bridge.exe",
+  "extension/dist/runtime-inventory.json",
 ];
 for (const requiredPath of required) {
   if (!files.has(requiredPath)) {
@@ -79,47 +77,48 @@ for (const requiredPath of required) {
 const manifest = JSON.parse(
   files.get("extension/package.json").bytes.toString("utf8"),
 );
+const expectedCommands = [
+  {
+    command: "unityDebuggerPureMcp.configureCodex",
+    title: "Configure Codex",
+    category: "Unity Debugger Pure MCP",
+  },
+  {
+    command: "unityDebuggerPureMcp.configureClaudeCode",
+    title: "Configure Claude Code",
+    category: "Unity Debugger Pure MCP",
+  },
+];
 if (
   manifest.publisher !== "kpk" ||
   manifest.name !== "unity-debugger-pure-mcp" ||
   manifest.displayName !== "Unity Debugger Pure MCP" ||
-  manifest.version !== "0.1.0" ||
+  manifest.version !== "0.1.1" ||
+  manifest.icon !== "images/icon.png" ||
   manifest.main !== "./dist/extension.cjs" ||
   JSON.stringify(manifest.extensionDependencies) !==
-    JSON.stringify(["kpk.unity-debugger-pure"])
+    JSON.stringify(["kpk.unity-debugger-pure"]) ||
+  JSON.stringify(manifest.contributes?.commands) !== JSON.stringify(expectedCommands)
 ) {
-  throw new Error("Packaged companion manifest has the wrong production identity or dependency.");
+  throw new Error(
+    "Packaged companion manifest has the wrong production identity, dependency, or commands.",
+  );
 }
 if (manifest.dependencies !== undefined) {
   throw new Error("Companion manifest must not declare external Node dependencies.");
 }
 
+verifyPngIcon(files.get("extension/images/icon.png").bytes);
+
 const executable = files.get("extension/dist/mcp-bridge.exe").bytes;
 verifyAmd64Pe(executable);
 const packagedInventoryText = files
-  .get("extension/runtime-inventory.json")
+  .get("extension/dist/runtime-inventory.json")
   .bytes.toString("utf8");
-const committedInventoryText = await fs.readFile(
-  path.join(repositoryRoot, "runtime-inventory.json"),
-  "utf8",
-);
-if (
-  packagedInventoryText.replaceAll("\r\n", "\n") !==
-  committedInventoryText.replaceAll("\r\n", "\n")
-) {
-  throw new Error("Packaged MCP runtime inventory differs from the committed inventory.");
-}
-const inventory = JSON.parse(packagedInventoryText);
-if (
-  Object.keys(inventory).sort().join(",") !== "nodeVersion,sha256" ||
-  inventory.nodeVersion !== requiredNodeVersion ||
-  !/^[0-9a-f]{64}$/.test(inventory.sha256)
-) {
-  throw new Error("MCP runtime inventory is malformed or records the wrong Node version.");
-}
+const inventory = parseRuntimeInventory(packagedInventoryText);
 const digest = createHash("sha256").update(executable).digest("hex");
 if (inventory.sha256 !== digest) {
-  throw new Error("MCP bridge SHA-256 does not match the reviewed runtime inventory.");
+  throw new Error("MCP bridge digest does not match the packaged runtime inventory.");
 }
 
 console.log(`MCP VSIX verification passed: ${files.size} allowlisted files, AMD64 SEA ${digest}.`);
@@ -134,9 +133,10 @@ function allowedPath(filePath) {
     "extension/changelog.md",
     "extension/security.md",
     "extension/third_party_notices.md",
-    "extension/runtime-inventory.json",
+    "extension/images/icon.png",
     "extension/dist/extension.cjs",
     "extension/dist/mcp-bridge.exe",
+    "extension/dist/runtime-inventory.json",
   ]).has(filePath);
 }
 
@@ -144,7 +144,23 @@ function allowedDirectory(directoryPath) {
   return new Set([
     "extension/",
     "extension/dist/",
+    "extension/images/",
   ]).has(directoryPath);
+}
+
+function verifyPngIcon(bytes) {
+  const signature = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
+  if (
+    bytes.byteLength < 26 ||
+    !bytes.subarray(0, 8).equals(signature) ||
+    bytes.toString("ascii", 12, 16) !== "IHDR" ||
+    bytes.readUInt32BE(16) !== 512 ||
+    bytes.readUInt32BE(20) !== 512 ||
+    bytes[24] !== 8 ||
+    (bytes[25] !== 2 && bytes[25] !== 6)
+  ) {
+    throw new Error("Companion icon must be a 512px RGB or RGBA PNG.");
+  }
 }
 
 function verifyAmd64Pe(bytes) {

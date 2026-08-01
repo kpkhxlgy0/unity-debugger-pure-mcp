@@ -100,6 +100,16 @@ describe("DapGateway", () => {
     await expect(gateway.stepOut(session, 7)).resolves.toBeUndefined();
   });
 
+  it("accepts VS Code null results for successful empty control response bodies", async () => {
+    const session = sessionWith(null);
+    const gateway = new DapGateway();
+
+    await expect(gateway.pause(session, 7)).resolves.toBeUndefined();
+    await expect(gateway.stepIn(session, 7)).resolves.toBeUndefined();
+    await expect(gateway.next(session, 7)).resolves.toBeUndefined();
+    await expect(gateway.stepOut(session, 7)).resolves.toBeUndefined();
+  });
+
   it.each([
     ["threads", { threads: [{ id: 1, name: "ok" }, { id: 0, name: "bad" }] }],
     ["stackTrace", { stackFrames: [{ id: 4, name: "Tick", line: 1 }] }],

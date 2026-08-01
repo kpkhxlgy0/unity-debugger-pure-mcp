@@ -220,7 +220,6 @@ git commit -m "build: prepare companion 0.1.1"
 ### Task 3: Polish README and changelog without changing launcher guidance
 
 **Files:**
-- Create: `tests/build/repository-presentation.test.mjs`
 - Modify: `README.md`
 - Modify: `CHANGELOG.md`
 
@@ -228,32 +227,7 @@ git commit -m "build: prepare companion 0.1.1"
 - Consumes: `images/icon.png`, companion version 0.1.1, launcher version 0.1.0.
 - Produces: repository header and durable release notes matching the two independent release channels.
 
-- [ ] **Step 1: Write the failing presentation test**
-
-Create `tests/build/repository-presentation.test.mjs` and require the README to contain:
-
-```js
-assert.match(readme, /<img src="images\/icon\.png"[^>]+width="128"/);
-assert.match(readme, /visual-studio-marketplace\/v\/kpk\.unity-debugger-pure-mcp/);
-assert.match(readme, /open-vsx\/v\/kpk\/unity-debugger-pure-mcp/);
-assert.match(readme, /pypi\/v\/unity-debugger-pure-mcp/);
-assert.match(readme, /actions\/workflows\/ci\.yml\/badge\.svg/);
-assert.match(readme, /github\/license\/kpkhxlgy0\/unity-debugger-pure-mcp/);
-assert.match(readme, /companion version `0\.1\.1`/);
-assert.match(readme, /"unity-debugger-pure-mcp==0\.1\.0"/);
-assert.doesNotMatch(readme, /"unity-debugger-pure-mcp==0\.1\.1"/);
-assert.match(changelog, /^## 0\.1\.1$/m);
-```
-
-- [ ] **Step 2: Run the test and verify RED**
-
-```powershell
-node --test tests/build/repository-presentation.test.mjs
-```
-
-Expected: FAIL because the icon header, badges, companion 0.1.1 text, and changelog section are absent.
-
-- [ ] **Step 3: Add the approved README header**
+- [ ] **Step 1: Add the approved README header**
 
 Use one centered icon and one centered badge row at the top of `README.md`. Link badges to the Marketplace item, Open VSX extension, PyPI project, CI Actions page, and `LICENSE.txt`. Change only the companion prerequisite text from 0.1.0 to 0.1.1; retain the exact public launcher pin:
 
@@ -263,7 +237,7 @@ Use one centered icon and one centered badge row at the top of `README.md`. Link
 
 Keep the historical statement that the initial Marketplace listing was 0.1.0.
 
-- [ ] **Step 4: Add changelog entry 0.1.1**
+- [ ] **Step 2: Add changelog entry 0.1.1**
 
 Prepend:
 
@@ -275,16 +249,23 @@ Prepend:
 - Kept the external `uvx` launcher pinned independently at version 0.1.0.
 ```
 
-- [ ] **Step 5: Run GREEN and commit after explicit authorization**
+- [ ] **Step 3: Verify launcher behavior documentation and review presentation**
 
 ```powershell
-node --test tests/build/repository-presentation.test.mjs tests/build/external-launcher-docs.test.mjs
+node --test tests/build/external-launcher-docs.test.mjs
 git diff --check
-git add README.md CHANGELOG.md tests/build/repository-presentation.test.mjs
+```
+
+Review the rendered README header and confirm all five links resolve, companion text says 0.1.1, and the Codex configuration still pins the launcher to 0.1.0. Human-facing prose and badges are reviewed directly rather than locked with source-text tests.
+
+- [ ] **Step 4: Commit after explicit authorization**
+
+```powershell
+git add README.md CHANGELOG.md
 git commit -m "docs: polish companion repository presentation"
 ```
 
-Expected: both documentation contracts pass; launcher remains pinned to 0.1.0.
+Expected: the existing launcher behavior contract passes; launcher remains pinned to 0.1.0.
 
 ---
 

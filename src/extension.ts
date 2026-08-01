@@ -21,8 +21,9 @@ import {
 import { DependencyAdapter } from "./dependencyAdapter.js";
 import {
   LiveHostRegistrationPublisher,
-  verifyReviewedBridgeIntegrity,
+  verifyPackagedBridgeIntegrity,
 } from "./external/liveHostRegistrationPublisher.js";
+import { createVscodeExternalClientCommands } from "./external/config/externalClientCommands.js";
 import {
   createMcpProvider,
   MCP_PROVIDER_ID,
@@ -75,6 +76,7 @@ export interface ExtensionCompositionBoundary {
     debugType: string,
     factory: vscode.DebugAdapterTrackerFactory,
   ): vscode.Disposable;
+  registerExternalClientCommands(): vscode.Disposable;
   createBridgeHost(handler: BridgeToolHandler): BridgeHostLike;
   createLiveHostRegistrationPublisher(
     descriptor: BridgeDescriptor,
@@ -371,6 +373,9 @@ export async function activateWithDependencies(
         createDebugAdapterTracker: createTracker,
       }),
     ));
+    lifecycleDisposables.push(onceDisposable(
+      boundary.registerExternalClientCommands(),
+    ));
 
     const activeSession = boundary.activeDebugSession();
     if (activeSession !== undefined) {
@@ -514,11 +519,12 @@ function productionBoundary(
     onDidChangeBreakpoints: (listener) => vscode.debug.onDidChangeBreakpoints(listener),
     registerDebugAdapterTrackerFactory: (debugType, factory) =>
       vscode.debug.registerDebugAdapterTrackerFactory(debugType, factory),
+    registerExternalClientCommands: () => createVscodeExternalClientCommands(context),
     createBridgeHost: (handler) => new BridgeHost({ handler }),
     async createLiveHostRegistrationPublisher(descriptor) {
       const executable = context.asAbsolutePath(path.join("dist", "mcp-bridge.exe"));
-      const bridgeSha256 = await verifyReviewedBridgeIntegrity(
-        context.asAbsolutePath("runtime-inventory.json"),
+      const bridgeSha256 = await verifyPackagedBridgeIntegrity(
+        context.asAbsolutePath(path.join("dist", "runtime-inventory.json")),
         executable,
       );
       return new LiveHostRegistrationPublisher({

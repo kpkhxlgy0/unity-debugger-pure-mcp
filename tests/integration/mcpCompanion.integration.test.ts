@@ -276,6 +276,7 @@ describe("packaged MCP companion simulated session", () => {
         listeners.trackerFactory = factory;
         return disposable();
       },
+      registerExternalClientCommands: () => disposable(),
       createBridgeHost(handler: BridgeToolHandler) {
         bridgeHost = new BridgeHost({ handler });
         return {

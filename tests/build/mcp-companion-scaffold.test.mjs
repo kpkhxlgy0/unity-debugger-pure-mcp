@@ -9,15 +9,21 @@ test("repository root is the dependent Windows MCP extension", () => {
 
   assert.equal(manifest.publisher, "kpk");
   assert.equal(manifest.name, "unity-debugger-pure-mcp");
-  assert.equal(manifest.version, "0.1.0");
+  assert.equal(manifest.version, "0.1.1");
+  assert.equal(manifest.icon, "images/icon.png");
   assert.equal(
     manifest.repository.url,
     "https://github.com/kpkhxlgy0/unity-debugger-pure-mcp.git",
   );
   assert.equal(manifest.engines.vscode, "^1.101.0");
+  assert.equal(manifest.engines.node, ">=26.5.0 <27.0.0");
+  assert.equal(
+    manifest.scripts["verify:release-inventory"],
+    "node scripts/verify-release-inventory.mjs",
+  );
   assert.equal(manifest.devDependencies["@types/vscode"], "1.101.0");
   assert.deepEqual(manifest.workspaces, ["server"]);
-  assert.deepEqual(manifest.activationEvents, []);
+  assert.deepEqual(manifest.activationEvents, ["onStartupFinished"]);
   assert.deepEqual(manifest.extensionDependencies, [
     "kpk.unity-debugger-pure",
   ]);
@@ -29,6 +35,20 @@ test("repository root is the dependent Windows MCP extension", () => {
       label: "Unity Debugger Pure MCP",
     },
   ]);
+  assert.deepEqual(manifest.contributes.commands, [
+    {
+      command: "unityDebuggerPureMcp.configureCodex",
+      title: "Configure Codex",
+      category: "Unity Debugger Pure MCP",
+    },
+    {
+      command: "unityDebuggerPureMcp.configureClaudeCode",
+      title: "Configure Claude Code",
+      category: "Unity Debugger Pure MCP",
+    },
+  ]);
+  assert.equal(manifest.contributes.configuration, undefined);
+  assert.equal(manifest.contributes.statusBar, undefined);
   assert.equal(fs.existsSync("src/extension.ts"), true);
   assert.equal(fs.existsSync("server/src/server.ts"), true);
   assert.equal(fs.existsSync("tests/extension/vscode-1.101-boundary.ts"), true);
@@ -41,6 +61,8 @@ test("only the private server workspace loads MCP runtime dependencies", () => {
   const server = readJson("server/package.json");
 
   assert.equal(extension.dependencies, undefined);
+  assert.equal(extension.devDependencies["smol-toml"], "1.7.1");
+  assert.equal(extension.devDependencies["jsonc-parser"], "3.3.1");
   assert.equal(server.private, true);
   assert.equal(server.dependencies["@modelcontextprotocol/sdk"], "1.30.0");
   assert.equal(server.dependencies.zod, "4.4.3");
@@ -105,6 +127,14 @@ test("normal scripts typecheck and test both standalone programs", () => {
     "npm run build:extension && npm run build:bridge && npm run package:vsix && npm run verify:vsix",
   );
   assert.equal(
+    scripts["verify:vsix"],
+    "node scripts/verify-mcp-vsix.mjs dist/unity-debugger-pure-mcp-0.1.1.vsix",
+  );
+  assert.equal(
+    scripts["package:vsix"],
+    "vsce package --no-dependencies --out dist/unity-debugger-pure-mcp-0.1.1.vsix",
+  );
+  assert.equal(
     scripts["package:launcher"],
     "npm run build:launcher && npm run verify:launcher",
   );
@@ -128,17 +158,26 @@ test("normal scripts typecheck and test both standalone programs", () => {
     scripts["verify:launcher"],
     "uv run --project launcher --locked --python 3.10 python launcher/scripts/verify_artifacts.py dist/launcher",
   );
+  assert.doesNotMatch(
+    [scripts["build:launcher"], scripts["package:launcher"], scripts["verify:launcher"]].join("\n"),
+    /0\.1\.1/,
+  );
 });
 
 test("lockfile pins stable extension and server workspace dependencies", () => {
   const lock = readJson("package-lock.json");
 
+  assert.equal(lock.version, "0.1.1");
+  assert.equal(lock.packages[""].version, "0.1.1");
+  assert.equal(lock.packages.server.version, "0.1.0");
   assert.equal(lock.packages[""].engines.vscode, "^1.101.0");
   assert.equal(
     lock.packages[""].devDependencies["@types/vscode"],
     "1.101.0",
   );
   assert.equal(lock.packages["node_modules/@types/vscode"].version, "1.101.0");
+  assert.equal(lock.packages["node_modules/smol-toml"].version, "1.7.1");
+  assert.equal(lock.packages["node_modules/jsonc-parser"].version, "3.3.1");
   assert.equal(
     lock.packages.server.dependencies["@modelcontextprotocol/sdk"],
     "1.30.0",
@@ -149,6 +188,9 @@ test("lockfile pins stable extension and server workspace dependencies", () => {
     "1.30.0",
   );
   assert.equal(lock.packages["node_modules/zod"].version, "4.4.3");
+
+  const launcher = fs.readFileSync("launcher/pyproject.toml", "utf8");
+  assert.match(launcher, /^version = "0\.1\.0"$/m);
 });
 
 test("Git ignores generated outputs but keeps product inputs visible", () => {
