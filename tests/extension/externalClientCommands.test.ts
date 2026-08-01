@@ -17,6 +17,7 @@ const vscodeHarness = vi.hoisted(() => {
     quickPickCalls: [] as unknown[],
     informationCalls: [] as unknown[],
     warningCalls: [] as unknown[],
+    errorCalls: [] as unknown[],
     opened: [] as string[],
   };
   return { state };
@@ -46,6 +47,10 @@ vi.mock("vscode", () => ({
     showWarningMessage: vi.fn(async (...args: unknown[]) => {
       vscodeHarness.state.warningCalls.push(args);
       return vscodeHarness.state.messageResult;
+    }),
+    showErrorMessage: vi.fn(async (...args: unknown[]) => {
+      vscodeHarness.state.errorCalls.push(args);
+      return undefined;
     }),
     showTextDocument: vi.fn(async () => undefined),
   },
@@ -87,6 +92,7 @@ beforeEach(() => {
   vscodeHarness.state.quickPickCalls = [];
   vscodeHarness.state.informationCalls = [];
   vscodeHarness.state.warningCalls = [];
+  vscodeHarness.state.errorCalls = [];
   vscodeHarness.state.opened = [];
 });
 
@@ -96,7 +102,8 @@ afterEach(async () => {
 });
 
 async function temporaryRoot(): Promise<string> {
-  const root = await fs.mkdtemp(path.join(os.tmpdir(), "udp-mcp-command-"));
+  const created = await fs.mkdtemp(path.join(os.tmpdir(), "udp-mcp-command-"));
+  const root = await fs.realpath(created);
   temporaryRoots.push(root);
   return root;
 }
@@ -443,6 +450,7 @@ describe("VS Code external client command adapter", () => {
     await vscodeHarness.state.commands.get(CONFIGURE_CODEX_COMMAND)!();
     await vscodeHarness.state.commands.get(CONFIGURE_CLAUDE_COMMAND)!();
 
+    expect(vscodeHarness.state.errorCalls).toEqual([]);
     expect(await fs.readFile(path.join(root, ".codex", "config.toml"), "utf8"))
       .toContain("unity-debugger-pure-mcp==0.1.0");
     expect(JSON.parse(await fs.readFile(path.join(root, ".mcp.json"), "utf8")))

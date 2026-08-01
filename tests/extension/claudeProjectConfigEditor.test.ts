@@ -73,7 +73,8 @@ afterEach(async () => {
 });
 
 async function temporaryRoot(): Promise<string> {
-  const root = await fs.mkdtemp(path.join(os.tmpdir(), "udp-mcp-claude-"));
+  const created = await fs.mkdtemp(path.join(os.tmpdir(), "udp-mcp-claude-"));
+  const root = await fs.realpath(created);
   temporaryRoots.push(root);
   return root;
 }
@@ -98,11 +99,12 @@ describe("Claude project configuration classification", () => {
   it("distinguishes missing entries from a compatible manual server", async () => {
     const root = await temporaryRoot();
     const { editor } = await createEditor(root);
+    const canonicalRoot = await fs.realpath(root);
 
     await expect(editor.inspect()).resolves.toMatchObject({
       client: "claude",
       state: "absent",
-      filePath: path.join(root, ".mcp.json"),
+      filePath: path.join(canonicalRoot, ".mcp.json"),
       revision: null,
     });
 

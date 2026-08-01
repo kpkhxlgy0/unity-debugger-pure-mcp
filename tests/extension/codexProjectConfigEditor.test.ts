@@ -41,7 +41,8 @@ afterEach(async () => {
 });
 
 async function temporaryRoot(): Promise<string> {
-  const root = await fs.mkdtemp(path.join(os.tmpdir(), "udp-mcp-codex-"));
+  const created = await fs.mkdtemp(path.join(os.tmpdir(), "udp-mcp-codex-"));
+  const root = await fs.realpath(created);
   temporaryRoots.push(root);
   return root;
 }
@@ -57,11 +58,12 @@ describe("Codex project configuration classification", () => {
   it("distinguishes an absent entry from a compatible manual entry", async () => {
     const root = await temporaryRoot();
     const editor = await CodexProjectConfigEditor.create(root);
+    const canonicalRoot = await fs.realpath(root);
 
     await expect(editor.inspect()).resolves.toMatchObject({
       client: "codex",
       state: "absent",
-      filePath: path.join(root, ".codex", "config.toml"),
+      filePath: path.join(canonicalRoot, ".codex", "config.toml"),
       revision: null,
     });
 

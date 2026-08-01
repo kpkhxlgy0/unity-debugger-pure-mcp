@@ -25,7 +25,8 @@ afterEach(async () => {
 });
 
 async function temporaryRoot(): Promise<string> {
-  const root = await fsPromises.mkdtemp(path.join(os.tmpdir(), "udp-mcp-config-"));
+  const created = await fsPromises.mkdtemp(path.join(os.tmpdir(), "udp-mcp-config-"));
+  const root = await fsPromises.realpath(created);
   temporaryRoots.push(root);
   return root;
 }
@@ -188,18 +189,19 @@ describe("atomic workspace file", () => {
   it("fails closed when the parent is replaced by a junction during replace", async () => {
     const root = await temporaryRoot();
     const outside = await temporaryRoot();
-    const parent = path.join(root, ".codex");
-    const movedParent = path.join(root, ".codex-original");
     const outsideConfig = path.join(outside, "config.toml");
     const original = 'value = "original"\n';
     const replacement = Buffer.from('value = "managed"\n', "utf8");
-    await fsPromises.mkdir(parent);
-    await fsPromises.writeFile(path.join(parent, "config.toml"), original, "utf8");
+    await fsPromises.mkdir(path.join(root, ".codex"));
+    await fsPromises.writeFile(path.join(root, ".codex", "config.toml"), original, "utf8");
     await fsPromises.writeFile(outsideConfig, original, "utf8");
     const file = await AtomicWorkspaceFile.create({
       workspaceRoot: root,
       relativePath: ".codex/config.toml",
     });
+    const parent = path.dirname(file.filePath);
+    const movedParent = path.join(path.dirname(parent), ".codex-original");
+    const canonicalOutside = await fsPromises.realpath(outside);
     const expected = await file.read();
     const originalOpen = fsPromises.open.bind(fsPromises);
     let swapped = false;
@@ -221,7 +223,8 @@ describe("atomic workspace file", () => {
             return async (...writeArgs: Parameters<typeof target.writeFile>) => {
               await target.writeFile(...writeArgs);
               const resolved = await fsPromises.realpath(openedPath);
-              outsideWriteObserved = path.dirname(resolved) === path.resolve(outside);
+              outsideWriteObserved = path.dirname(resolved).toLowerCase() ===
+                canonicalOutside.toLowerCase();
             };
           }
           const value = Reflect.get(target, property, target) as unknown;
