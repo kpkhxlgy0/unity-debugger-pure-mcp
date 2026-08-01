@@ -1,3 +1,4 @@
+import { promises as fs } from "node:fs";
 import path from "node:path";
 
 import * as vscode from "vscode";
@@ -168,9 +169,10 @@ async function runCommand(
       return;
     }
 
+    const canonicalRoot = await fs.realpath(selected.fsPath);
     const editor = await boundary.createEditor(client, selected.fsPath);
     const observed = await editor.inspect();
-    if (observed.client !== client || !containsPath(selected.fsPath, observed.filePath)) {
+    if (observed.client !== client || !containsPath(canonicalRoot, observed.filePath)) {
       throw new Error("Invalid editor boundary");
     }
     const allowedActions: readonly (ExternalConfigAction | "open")[] =
@@ -186,7 +188,7 @@ async function runCommand(
     if (!allowedActions.includes(action)) {
       throw new Error("Invalid configuration action");
     }
-    if (!selectionRemainsAllowed(boundary, selected)) {
+    if (!(await selectionRemainsAllowed(boundary, canonicalRoot))) {
       await boundary.showError(WORKSPACE_CHANGED_ERROR);
       return;
     }
@@ -195,7 +197,7 @@ async function runCommand(
       return;
     }
     const result = await editor.apply(action, observed);
-    if (result.client !== client || !containsPath(selected.fsPath, result.filePath)) {
+    if (result.client !== client || !containsPath(canonicalRoot, result.filePath)) {
       throw new Error("Invalid editor result");
     }
     await boundary.showSuccess(client, result.filePath);
@@ -238,12 +240,29 @@ class WorkspaceStateOwnershipStore implements ClaudeOwnershipStore {
   }
 }
 
-function selectionRemainsAllowed(
+async function selectionRemainsAllowed(
   boundary: ExternalClientCommandsBoundary,
-  selected: ExternalWorkspaceFolder,
-): boolean {
-  return boundary.isWorkspaceTrusted() && boundary.workspaceFolders().some((folder) =>
-    isEligibleLocalFolder(folder) && samePath(folder.fsPath, selected.fsPath));
+  canonicalRoot: string,
+): Promise<boolean> {
+  if (!boundary.isWorkspaceTrusted()) {
+    return false;
+  }
+  for (const folder of boundary.workspaceFolders()) {
+    if (!isEligibleLocalFolder(folder)) {
+      continue;
+    }
+    try {
+      if (samePath(await fs.realpath(folder.fsPath), canonicalRoot)) {
+        const currentFolders = boundary.workspaceFolders();
+        return boundary.isWorkspaceTrusted() && currentFolders.some((current) =>
+          isEligibleLocalFolder(current) && samePath(current.fsPath, folder.fsPath)
+        );
+      }
+    } catch {
+      // A missing or unresolvable root is no longer an eligible workspace.
+    }
+  }
+  return false;
 }
 
 function isEligibleLocalFolder(folder: ExternalWorkspaceFolder): boolean {

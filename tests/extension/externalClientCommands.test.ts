@@ -171,7 +171,7 @@ function controllerHarness(options: {
   setFolders(value: readonly ExternalWorkspaceFolder[]): void;
   setAction(value: ExternalConfigAction | "open" | undefined): void;
   setPick(value: ExternalWorkspaceFolder | undefined): void;
-  beforeAction(callback: (() => void) | undefined): void;
+  beforeAction(callback: (() => void | Promise<void>) | undefined): void;
 } {
   let trusted = true;
   let folders: readonly ExternalWorkspaceFolder[] = [{
@@ -181,7 +181,7 @@ function controllerHarness(options: {
   }];
   let action: ExternalConfigAction | "open" | undefined = "configure";
   let pick: ExternalWorkspaceFolder | undefined;
-  let actionCallback: (() => void) | undefined;
+  let actionCallback: (() => void | Promise<void>) | undefined;
   const client = options.client ?? "codex";
   const editor = new StateEditor(inspection(client, options.state ?? "absent", options.root));
   const commands = new Map<string, () => Promise<void>>();
@@ -207,7 +207,7 @@ function controllerHarness(options: {
     },
     async chooseAction({ actions }) {
       effects.actions.push(actions);
-      actionCallback?.();
+      await actionCallback?.();
       return action;
     },
     async showSuccess(successClient, filePath) {
@@ -306,6 +306,28 @@ describe("external client command controller", () => {
     }]);
   });
 
+  it("accepts a selected workspace alias when the editor returns its canonical path", async () => {
+    const canonicalRoot = await temporaryRoot();
+    const aliasContainer = await temporaryRoot();
+    const aliasRoot = path.join(aliasContainer, "workspace-alias");
+    await fs.symlink(canonicalRoot, aliasRoot, "junction");
+    const harness = controllerHarness({ root: aliasRoot });
+    harness.editor.inspection = inspection("codex", "absent", canonicalRoot);
+    registerExternalClientCommands(harness.boundary);
+
+    await harness.commands.get(CONFIGURE_CODEX_COMMAND)!();
+
+    expect(harness.effects.errors).toEqual([]);
+    expect(harness.editor.applications).toEqual([{
+      action: "configure",
+      expected: inspection("codex", "absent", canonicalRoot),
+    }]);
+    expect(harness.effects.successes).toEqual([{
+      client: "codex",
+      filePath: path.join(canonicalRoot, ".codex/config.toml"),
+    }]);
+  });
+
   it("requires an explicit selection for a multi-root workspace", async () => {
     const first = await temporaryRoot();
     const second = await temporaryRoot();
@@ -394,6 +416,84 @@ describe("external client command controller", () => {
     expect(rootChange.editor.applications).toEqual([]);
     expect([...trust.effects.errors, ...rootChange.effects.errors]).toEqual([
       "The selected workspace is no longer available or trusted.",
+      "The selected workspace is no longer available or trusted.",
+    ]);
+  });
+
+  it("rejects a selected workspace alias that is retargeted before mutation", async () => {
+    const originalRoot = await temporaryRoot();
+    const replacementRoot = await temporaryRoot();
+    const aliasContainer = await temporaryRoot();
+    const aliasRoot = path.join(aliasContainer, "workspace-alias");
+    await fs.symlink(originalRoot, aliasRoot, "junction");
+    const harness = controllerHarness({ root: aliasRoot });
+    harness.editor.inspection = inspection("codex", "absent", originalRoot);
+    harness.beforeAction(async () => {
+      await fs.rm(aliasRoot, { force: true });
+      await fs.symlink(replacementRoot, aliasRoot, "junction");
+    });
+    registerExternalClientCommands(harness.boundary);
+
+    await harness.commands.get(CONFIGURE_CODEX_COMMAND)!();
+
+    expect(harness.editor.applications).toEqual([]);
+    expect(harness.effects.errors).toEqual([
+      "The selected workspace is no longer available or trusted.",
+    ]);
+  });
+
+  it("rechecks workspace trust after resolving current folder membership", async () => {
+    const root = await temporaryRoot();
+    const harness = controllerHarness({ root });
+    const originalRealpath = fs.realpath.bind(fs);
+    let realpathCalls = 0;
+    const realpath = vi.spyOn(fs, "realpath").mockImplementation(async (...args) => {
+      const result = await originalRealpath(...args);
+      realpathCalls += 1;
+      if (realpathCalls === 2) {
+        harness.setTrusted(false);
+      }
+      return result;
+    });
+    registerExternalClientCommands(harness.boundary);
+
+    try {
+      await harness.commands.get(CONFIGURE_CODEX_COMMAND)!();
+    } finally {
+      realpath.mockRestore();
+    }
+
+    expect(realpathCalls).toBe(2);
+    expect(harness.editor.applications).toEqual([]);
+    expect(harness.effects.errors).toEqual([
+      "The selected workspace is no longer available or trusted.",
+    ]);
+  });
+
+  it("rechecks workspace membership after resolving the current folder", async () => {
+    const root = await temporaryRoot();
+    const harness = controllerHarness({ root });
+    const originalRealpath = fs.realpath.bind(fs);
+    let realpathCalls = 0;
+    const realpath = vi.spyOn(fs, "realpath").mockImplementation(async (...args) => {
+      const result = await originalRealpath(...args);
+      realpathCalls += 1;
+      if (realpathCalls === 2) {
+        harness.setFolders([]);
+      }
+      return result;
+    });
+    registerExternalClientCommands(harness.boundary);
+
+    try {
+      await harness.commands.get(CONFIGURE_CODEX_COMMAND)!();
+    } finally {
+      realpath.mockRestore();
+    }
+
+    expect(realpathCalls).toBe(2);
+    expect(harness.editor.applications).toEqual([]);
+    expect(harness.effects.errors).toEqual([
       "The selected workspace is no longer available or trusted.",
     ]);
   });
