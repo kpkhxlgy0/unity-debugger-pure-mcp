@@ -9,7 +9,7 @@ test("repository root is the dependent Windows MCP extension", () => {
 
   assert.equal(manifest.publisher, "kpk");
   assert.equal(manifest.name, "unity-debugger-pure-mcp");
-  assert.equal(manifest.version, "0.1.1");
+  assert.equal(manifest.version, "0.1.2");
   assert.equal(manifest.icon, "images/icon.png");
   assert.equal(
     manifest.repository.url,
@@ -128,11 +128,11 @@ test("normal scripts typecheck and test both standalone programs", () => {
   );
   assert.equal(
     scripts["verify:vsix"],
-    "node scripts/verify-mcp-vsix.mjs dist/unity-debugger-pure-mcp-0.1.1.vsix",
+    "node scripts/verify-mcp-vsix.mjs dist/unity-debugger-pure-mcp-0.1.2.vsix",
   );
   assert.equal(
     scripts["package:vsix"],
-    "vsce package --no-dependencies --out dist/unity-debugger-pure-mcp-0.1.1.vsix",
+    "vsce package --no-dependencies --out dist/unity-debugger-pure-mcp-0.1.2.vsix",
   );
   assert.equal(
     scripts["package:launcher"],
@@ -167,8 +167,8 @@ test("normal scripts typecheck and test both standalone programs", () => {
 test("lockfile pins stable extension and server workspace dependencies", () => {
   const lock = readJson("package-lock.json");
 
-  assert.equal(lock.version, "0.1.1");
-  assert.equal(lock.packages[""].version, "0.1.1");
+  assert.equal(lock.version, "0.1.2");
+  assert.equal(lock.packages[""].version, "0.1.2");
   assert.equal(lock.packages.server.version, "0.1.0");
   assert.equal(lock.packages[""].engines.vscode, "^1.101.0");
   assert.equal(

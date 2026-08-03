@@ -4,7 +4,7 @@
   "icon": "images/icon.png",
   "description": "MCP companion for Unity Debugger Pure debug sessions in VS Code.",
   "publisher": "kpk",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "repository": {
     "type": "git",
     "url": "https://github.com/kpkhxlgy0/unity-debugger-pure-mcp.git"
@@ -74,10 +74,10 @@
     "test:package:launcher": "node --test tests/package/launcher-package.test.mjs",
     "test:package": "npm run test:package:companion && npm run test:package:launcher",
     "test": "npm run test:build && npm run test:extension && npm run test:server && npm run test:integration && npm run test:launcher",
-    "verify:vsix": "node scripts/verify-mcp-vsix.mjs dist/unity-debugger-pure-mcp-0.1.1.vsix",
+    "verify:vsix": "node scripts/verify-mcp-vsix.mjs dist/unity-debugger-pure-mcp-0.1.2.vsix",
     "verify:release-inventory": "node scripts/verify-release-inventory.mjs",
     "verify:launcher": "uv run --project launcher --locked --python 3.10 python launcher/scripts/verify_artifacts.py dist/launcher",
-    "package:vsix": "vsce package --no-dependencies --out dist/unity-debugger-pure-mcp-0.1.1.vsix",
+    "package:vsix": "vsce package --no-dependencies --out dist/unity-debugger-pure-mcp-0.1.2.vsix",
     "package:companion": "npm run build:extension && npm run build:bridge && npm run package:vsix && npm run verify:vsix",
     "package:launcher": "npm run build:launcher && npm run verify:launcher",
     "package": "npm run package:companion && npm run package:launcher"

@@ -15,7 +15,7 @@
 Unity Debugger Pure MCP is the independent local MCP companion for
 [Unity Debugger Pure](https://marketplace.visualstudio.com/items?itemName=kpk.unity-debugger-pure)
 `0.2.0` and its public debugger API v1. It supports Windows x64, VS Code 1.101
-or newer, companion version `0.1.1`, and trusted workspaces. Install both VS
+or newer, companion version `0.1.2`, and trusted workspaces. Install both VS
 Code extensions and keep the matching VS Code window open: the companion
 controls only debug sessions owned by that running extension host.
 

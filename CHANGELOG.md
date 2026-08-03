@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.2
+
+- Accept Windows short-path and junction aliases when configuring Codex or
+  Claude Code, while rechecking workspace trust and membership before writes.
+
 ## 0.1.1
 
 - Added a dedicated companion icon aligned with Unity Debugger Pure.

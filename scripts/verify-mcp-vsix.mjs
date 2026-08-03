@@ -93,7 +93,7 @@ if (
   manifest.publisher !== "kpk" ||
   manifest.name !== "unity-debugger-pure-mcp" ||
   manifest.displayName !== "Unity Debugger Pure MCP" ||
-  manifest.version !== "0.1.1" ||
+  manifest.version !== "0.1.2" ||
   manifest.icon !== "images/icon.png" ||
   manifest.main !== "./dist/extension.cjs" ||
   JSON.stringify(manifest.extensionDependencies) !==

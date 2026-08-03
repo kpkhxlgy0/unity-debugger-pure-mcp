@@ -11,7 +11,7 @@ const repositoryRoot = path.resolve(import.meta.dirname, "../..");
 const artifactPath = path.join(
   repositoryRoot,
   "dist",
-  "unity-debugger-pure-mcp-0.1.1.vsix",
+  "unity-debugger-pure-mcp-0.1.2.vsix",
 );
 const inventoryPath = path.join(repositoryRoot, "runtime-inventory.json");
 const verifierPath = path.join(repositoryRoot, "scripts", "verify-mcp-vsix.mjs");
@@ -100,7 +100,7 @@ test("companion SEA and VSIX satisfy the isolated production contract", {
   const manifest = JSON.parse(files.get("extension/package.json").bytes.toString("utf8"));
   assert.deepEqual(manifest.extensionDependencies, ["kpk.unity-debugger-pure"]);
   assert.equal(manifest.name, "unity-debugger-pure-mcp");
-  assert.equal(manifest.version, "0.1.1");
+  assert.equal(manifest.version, "0.1.2");
   assert.equal(manifest.icon, "images/icon.png");
   assert.equal(manifest.main, "./dist/extension.cjs");
   assert.deepEqual(manifest.contributes.commands, [
